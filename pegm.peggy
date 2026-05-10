@@ -211,7 +211,10 @@ Suffix
       type: 'repeated',
       data: {
         separator: repeated?.separator ?? null,
-        quantifier,
+        quantifier: {
+          type: quantifier.type,
+          ...quantifier.data,
+        }
       }
     }
   }

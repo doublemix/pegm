@@ -417,7 +417,10 @@ function peg$parse(input, options) {
       type: 'repeated',
       data: {
         separator: repeated?.separator ?? null,
-        quantifier,
+        quantifier: {
+          type: quantifier.type,
+          ...quantifier.data,
+        }
       }
     }
   }

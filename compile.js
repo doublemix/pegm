@@ -133,18 +133,24 @@ class FunctionWriter extends CodeWriter {
     this.variables = [];
   }
 
-  parameter(name) {
-    this.parameters.push(name);
-    return new Identifier(name);
-  }
-
-  variable(requestedName, initialValue = null) {
+  getNameNotInUse(requestedName) {
     let inUseNames = new Set([...this.parameters, ...this.variables.map(v => v.name)]);
     let name = requestedName;
     let suffix = 1;
     while (inUseNames.has(name)) {
       name = `${requestedName}_${suffix++}`;
     }
+    return name;
+  }
+
+  parameter(requestedName) {
+    let name = this.getNameNotInUse(requestedName);
+    this.parameters.push(name);
+    return new Identifier(name);
+  }
+
+  variable(requestedName, initialValue = null) {
+    let name = this.getNameNotInUse(requestedName);
     this.variables.push({ name, initialValue });
     return new Identifier(name);
   }
@@ -236,7 +242,7 @@ function generateSequence(target, expression, code, context, secondaryTargets, s
     generateExpression(target, item.expression, currentCode, context, [itemVariable, ...secondaryTargets], currentScope)
     if (item.localNameInfo) {
       currentScope = new Map(currentScope);
-      currentScope.set(item.localNameInfo.id, itemVariable);
+      currentScope.set(item.localNameInfo.id, raw`${itemVariable}.v`);
     }
     i++;
   }
@@ -303,8 +309,21 @@ function generateLiteral(target, expression, code, context, secondaryTargets) {
   assignTargets(code, target, secondaryTargets, raw`${context.utils.matchLiteral}(${json(expression.value)});`);
 }
 
-function generateRuleReference(target, expression, code, context, secondaryTargets) {
-  assignTargets(code, target, secondaryTargets, raw`${expression.asReference}();`);
+function generateRuleReference(target, expression, code, context, secondaryTargets, scope) {
+  let ruleFunctionCall = raw`${expression.asReference}(`;
+
+  if (expression.valueArguments) {
+    for (let [index, argument] of enumerate(expression.valueArguments)) {
+      if (index > 0) {
+        ruleFunctionCall.add`, `
+      }
+      ruleFunctionCall.add`${generateActionCall(argument, scope)}`;
+    }
+  }
+
+  ruleFunctionCall.add`)`;
+
+  assignTargets(code, target, secondaryTargets, ruleFunctionCall);
 }
 
 function generateClass(target, expression, code, context, secondaryTargets) {
@@ -351,8 +370,28 @@ function generateRepeated(target, expression, code, context, secondaryTargets, s
     min = null;
     max = null;
   } else if (quantifier.type === 'oneOrMore') {
-    min = 1;
+    min = raw`1`;
     max = null;
+  } else if (quantifier.type === 'count') {
+    let countVariable = code.variable('count')
+    code.addLine`${countVariable} = ${generateActionCall(quantifier.count, scope)};`
+    min = countVariable;
+    max = countVariable;
+  } else if (quantifier.type === 'range') {
+    if (quantifier.min) {
+      let minVariable = code.variable('min');
+      code.addLine`${minVariable} = ${generateActionCall(quantifier.min, scope)};`
+      min = minVariable;
+    } else {
+      min = null;
+    }
+    if (quantifier.max) {
+      let maxVariable = code.variable('max');
+      code.addLine`${maxVariable} = ${generateActionCall(quantifier.max, scope)};`
+      max = maxVariable;
+    } else {
+      max = null;
+    }
   } else {
     throw new Error(`Unhandled quantifier type: ${quantifier.type}`);
   }
@@ -382,13 +421,13 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
   }
   loop.addLine`${mark} = ${context.utils.mark}();`
   if (max !== null) {
-    loop.addLine`if (${index} >= ${json(max)}) { break; }`
+    loop.addLine`if (${index} >= ${max}) { break; }`
   }
   code.addLine`${mark}.reset();`
   let successBlock = code
   if (min !== null) {
     let finalBlock = new BlockWriter(code);
-    code.addLine`if (${index} < ${json(min)}) ${finalBlock}`;
+    code.addLine`if (${index} < ${min}) ${finalBlock}`;
     assignTargets(finalBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
     successBlock = new BlockWriter(code);
     code.addLine`else ${successBlock}`;
@@ -443,7 +482,7 @@ function generateActionCall(action, scope) {
     if (!variable) {
       throw new Error(`Variable not found in scope: ${parameter.resolvedLocalName}, ${parameter.id}`);
     }
-    result.add`${variable}.v`;
+    result.add`${variable}`;
   }
 
   result.add`)`;
@@ -539,6 +578,13 @@ function* walkExpression(expression) {
   else if (expression.type === 'repeated') {
     yield* walkExpression(expression.expression);
     if (expression.separator) yield* walkExpression(expression.separator);
+    if (expression.quantifier.type === 'count') {
+      yield* walkJavascriptExpression(expression.quantifier.count);
+    }
+    if (expression.quantifier.type === 'range') {
+      if (expression.quantifier.min) yield* walkJavascriptExpression(expression.quantifier.min);
+      if (expression.quantifier.max) yield* walkJavascriptExpression(expression.quantifier.max);
+    }
   }
   else if (expression.type === 'group') {
     yield* walkExpression(expression.expression);
@@ -552,7 +598,13 @@ function* walkExpression(expression) {
   }
   else if (expression.type === 'class') { }
   else if (expression.type === 'literal') { }
-  else if (expression.type === 'ruleReference') { }
+  else if (expression.type === 'ruleReference') {
+    if (expression.valueArguments) {
+      for (let argument of expression.valueArguments) {
+        yield* walkJavascriptExpression(argument);
+      }
+    }
+  }
   else if (expression.type === 'any') { }
   else {
     throw new Error(`Unknown expression type: ${expression.type}`);
@@ -836,6 +888,16 @@ function compile(input) {
   /* infer localName for sequence items */
   let nextLocalNameId = 1;
   for (let node of walkProgram(program)) {
+    if (node.type === 'rule') {
+      let rule = node.node;
+      for (let parameter of rule.valueParameters) {
+        let localName = parameter.name
+        parameter.localNameInfo = {
+          id: nextLocalNameId++,
+          resolvedLocalName: localName,
+        };
+      }
+    }
     if (node.type === 'expression' && node.node.type === 'sequence') {
       for (let item of node.node.items) {
         let resolvedLocalName = item.localName?.name ?? (item.pluckName?.type === 'identifier' ? item.pluckName.name : null);
@@ -888,8 +950,17 @@ function compile(input) {
         walkExpressionWithScope(expression.expression, scope);
         handled = true;
       }
-      if (expression.type === 'repeated' && expression.separator) {
-        walkExpressionWithScope(expression.separator, scope);
+      if (expression.type === 'repeated') {
+        if (expression.separator) {
+          walkExpressionWithScope(expression.separator, scope);
+        }
+        if (expression.quantifier.type === 'count') {
+          expression.quantifier.count.scope = scope;
+        }
+        if (expression.quantifier.type === 'range') {
+          if (expression.quantifier.min) expression.quantifier.min.scope = scope;
+          if (expression.quantifier.max) expression.quantifier.max.scope = scope;
+        }
         handled = true;
       }
       if (expression.type === 'defaultValue') {
@@ -897,7 +968,11 @@ function compile(input) {
         handled = true;
       }
       if (expression.type === 'ruleReference') {
-        /* TODO support rule arguments */
+        if (expression.valueArguments) {
+          for (let argument of expression.valueArguments) {
+            argument.scope = scope;
+          }
+        }
         handled = true;
       }
       if (expression.type === 'class' || expression.type === 'literal' || expression.type === 'any') {
@@ -907,7 +982,11 @@ function compile(input) {
         throw new Error(`Warning: unhandled expression type: ${expression.type}`);
       }
     }
-    walkExpressionWithScope(rule.body, []);
+    let scope = [];
+    for (let parameter of rule.valueParameters) {
+      scope.push(parameter.localNameInfo);
+    }
+    walkExpressionWithScope(rule.body, scope);
   }
 
   /* generate actions */
@@ -966,13 +1045,18 @@ function compile(input) {
     }
   }
 
-
   for (let parsedRule of parsedRules) {
     let ruleFn = createFunction({ name: parsedRule.ruleFunctionName });
 
+    let scope = new Map();
+    for (let parameter of parsedRule.rule.valueParameters) {
+      let addedParameter = ruleFn.parameter('peg$param$' + parameter.localNameInfo.resolvedLocalName);
+      scope.set(parameter.localNameInfo.id, addedParameter);
+    }
+
     let t = ruleFn.variable('t');
 
-    generateExpression(t, parsedRule.rule.body, ruleFn, ruleGenerationContext);
+    generateExpression(t, parsedRule.rule.body, ruleFn, ruleGenerationContext, [], scope);
 
     ruleFn.addLine`return ${t};`
 
