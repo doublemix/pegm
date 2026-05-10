@@ -979,11 +979,24 @@ function compile(input) {
     parseFn.addLine`${ruleFn}`;
   }
 
+  let parseFullSource = parseFunction(function parseFullSource(startRule) {
+    return function () {
+      let t = startRule();
+      if (t.s && peg$index === peg$source.length) {
+        return t;
+      } else {
+        return peg$failure();
+      }
+    }
+  })
+
+  parseFn.addLine`${parseFullSource}`;
+
   let parsedStartRule = ruleMap.get(startRule.name);
   if (!parsedStartRule) {
     throw new Error(`Start rule not found: ${startRule.name}`);
   }
-  parseFn.addLine`return ${parsedStartRule.asReference}();`
+  parseFn.addLine`return parseFullSource(${parsedStartRule.asReference})();`
 
   code.add`\
 if (require.main === module) {
