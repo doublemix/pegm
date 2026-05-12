@@ -149,9 +149,9 @@ class FunctionWriter extends CodeWriter {
     return new Identifier(name);
   }
 
-  variable(requestedName, initialValue = null) {
+  variable(requestedName) {
     let name = this.getNameNotInUse(requestedName);
-    this.variables.push({ name, initialValue });
+    this.variables.push({ name });
     return new Identifier(name);
   }
 
@@ -159,18 +159,7 @@ class FunctionWriter extends CodeWriter {
     yield { type: 'writeLine', content: `function ${this.name}(${this.parameters.join(', ')}) {` };
     yield { type: 'indent', content: '  ' };
     if (this.variables.length > 0) {
-      yield { type: 'write', content: 'let ' };
-      for (let i = 0; i < this.variables.length; i++) {
-        let variable = this.variables[i];
-        yield { type: 'write', content: variable.name };
-        if (variable.initialValue !== null) {
-          yield { type: 'write', content: ` = ${variable.initialValue}` };
-        }
-        if (i < this.variables.length - 1) {
-          yield { type: 'write', content: ', ' };
-        }
-      }
-      yield { type: 'writeLine', content: ';' };
+      yield { type: 'write', content: `let ${this.variables.map(v => v.name).join(', ')};` };
     }
     yield* super.write();
     yield { type: 'dedent' };
@@ -400,10 +389,12 @@ function generateRepeated(target, expression, code, context, secondaryTargets, s
 }
 
 function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTargets, scope) {
-  let results = code.variable('r', '[]');
+  let results = code.variable('r');
   let needsIndex = max !== null || min !== null || separator !== null;
-  let index = needsIndex ? code.variable('i', '0') : null;
+  let index = needsIndex ? code.variable('i') : null;
   let mark = code.variable('m');
+  code.addLine`${results} = [];`
+  if (needsIndex) code.addLine`${index} = 0;`
   code.addLine`${mark} = ${context.utils.mark}();`
   let loop = new BlockWriter(code);
   code.addLine`while (true) ${loop}`;
@@ -506,8 +497,8 @@ class BlockWriter extends CodeWriter {
     this.parent = parent;
   }
 
-  variable(requestedName, initialValue = null) {
-    return this.parent.variable(requestedName, initialValue);
+  variable(requestedName) {
+    return this.parent.variable(requestedName);
   }
 
   *write() {
@@ -768,7 +759,8 @@ function compile(input) {
   let parseFn = createFunction({ name: 'parse' });
   code.addLine`${parseFn}`;
   let peg$source = parseFn.parameter('peg$source');
-  let peg$index = parseFn.variable('peg$index', `0`);
+  let peg$index = parseFn.variable('peg$index');
+  code.addLine`${peg$index} = 0;`
   let success = parseFunction(function peg$success(value) {
     return { s: true, v: value };
   });
@@ -829,24 +821,25 @@ function compile(input) {
       let characterClass = node.node;
       let classFn = createFunction({ name: `peg$class$${characterClassIndex++}` });
       let c = classFn.variable('c');
-      let matched = classFn.variable('matched', 'false');
-      classFn.addLine`c = peg$source.charAt(peg$index++);`
+      let matched = classFn.variable('matched');
+      classFn.addLine`${matched} = false;`
+      classFn.addLine`${c} = ${peg$source}.charAt(${peg$index}++);`
       let index = 0
       for (let classElement of characterClass.elements) {
         let lineStart = index === 0 ? 'if' : 'else if';
         let condition
         if (classElement.type === 'character') {
-          condition = raw`c === ${json(classElement.character)}`;
+          condition = raw`${c} === ${json(classElement.character)}`;
         } else if (classElement.type === 'range') {
-          condition = raw`(c >= ${json(classElement.start.character)} && c <= ${json(classElement.end.character)})`;
+          condition = raw`(${c} >= ${json(classElement.start.character)} && ${c}   <= ${json(classElement.end.character)})`;
         } else {
           throw new Error(`Unknown class element type: ${classElement.type}`);
         }
-        classFn.addLine`${lineStart} (${condition}) { matched = true; }`
+        classFn.addLine`${lineStart} (${condition}) { ${matched} = true; }`
         index++
       }
-      let finalCondition = characterClass.inverted ? `!matched` : `matched`;
-      classFn.addLine`if (${finalCondition}) { return ${success.asReference}(c); } else { return ${failure.asReference}(); }`
+      let finalCondition = characterClass.inverted ? `!${matched}` : `${matched}`;
+      classFn.addLine`if (${finalCondition}) { return ${success.asReference}(${c}); } else { return ${failure.asReference}(); }`
       characterClass.asReference = classFn.asReference;
       parseFn.addLine`${classFn}`;
     }
