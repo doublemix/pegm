@@ -876,7 +876,7 @@ function compile(input) {
         classFn.addLine`${lineStart} (${condition}) { ${matched} = true; }`
         index++
       }
-      let finalCondition = characterClass.inverted ? `!${matched}` : `${matched}`;
+      let finalCondition = characterClass.inverted ? raw`!${matched}` : raw`${matched}`;
       classFn.addLine`if (${finalCondition}) { return ${success.asReference}(${c}); } else { return ${failure.asReference}(); }`
       characterClass.asReference = classFn.asReference;
       parseFn.addLine`${classFn}`;
