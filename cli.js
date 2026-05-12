@@ -3,6 +3,7 @@ const path = require('path');
 
 const VALID_COMMANDS = ['parse', 'compile'];
 const VALID_FLAGS = ['--watch', '-w', '--help', '-h'];
+const FLAGS_WITH_VALUE = ['--emit-ast'];
 const PARSER_MODULE = './pegm';
 const COMPILER_MODULE = './compile';
 const PARSER_FILE = path.resolve(__dirname, 'pegm.js');
@@ -16,28 +17,44 @@ function printUsage() {
   console.log('  compile   Compile input file to JavaScript');
   console.log('');
   console.log('Options:');
-  console.log('  --watch, -w   Watch input file for changes and re-run');
-  console.log('  --help, -h    Show this help message');
+  console.log('  --watch, -w       Watch input file for changes and re-run');
+  console.log('  --emit-ast FILE   Output intermediate parse result to FILE (compile only)');
+  console.log('  --help, -h        Show this help message');
   console.log('');
   console.log('Examples:');
   console.log('  node cli.js parse input.pegm output.json -w');
   console.log('  node cli.js compile -w input.pegm output.js');
+  console.log('  node cli.js compile input.pegm output.js --emit-ast ast.json');
 }
 
 function validateArguments() {
   const args = process.argv.slice(2);
-  const flags = [];
+  const flags = {};
   const positionals = [];
 
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+
+    if (FLAGS_WITH_VALUE.includes(arg)) {
+      if (i + 1 >= args.length) {
+        console.error(`Error: Flag '${arg}' requires a value`);
+        printUsage();
+        process.exit(1);
+      }
+      flags[arg] = args[i + 1];
+      i++;
+      continue;
+    }
+
     if (VALID_FLAGS.includes(arg)) {
-      flags.push(arg);
+      flags[arg] = true;
       continue;
     }
 
     if (arg.startsWith('-')) {
       console.error(`Error: Unknown flag '${arg}'`);
-      console.error(`Valid flags are: ${VALID_FLAGS.join(', ')}`);
+      const allValidFlags = [...VALID_FLAGS, ...FLAGS_WITH_VALUE];
+      console.error(`Valid flags are: ${allValidFlags.join(', ')}`);
       printUsage();
       process.exit(1);
     }
@@ -50,7 +67,7 @@ function validateArguments() {
   const output = positionals[2];
 
   // Check for help flag first
-  if (flags.includes('--help') || flags.includes('-h')) {
+  if (flags['--help'] || flags['-h']) {
     printUsage();
     process.exit(0);
   }
@@ -107,9 +124,19 @@ function validateArguments() {
     process.exit(1);
   }
 
-  const isWatch = flags.includes('--watch') || flags.includes('-w');
+  // Validate emit-ast file path if provided
+  if (flags['--emit-ast']) {
+    const astDir = path.dirname(flags['--emit-ast']);
+    if (astDir !== '.' && !fs.existsSync(astDir)) {
+      console.error(`Error: AST output directory does not exist: ${astDir}`);
+      process.exit(1);
+    }
+  }
 
-  return { command, input, output, isWatch };
+  const isWatch = flags['--watch'] || flags['-w'];
+  const emitAst = flags['--emit-ast'];
+
+  return { command, input, output, isWatch, emitAst };
 }
 
 function clearRequireCache(modulePath) {
@@ -135,11 +162,24 @@ function runParse(input, output) {
   }
 }
 
-function runCompile(input, output) {
+function runCompile(input, output, emitAst) {
   try {
     let source = fs.readFileSync(input, 'utf-8');
     clearRequireCache(PARSER_MODULE);
     clearRequireCache(COMPILER_MODULE);
+
+    // Parse first to get intermediate AST
+    let { parse } = require(PARSER_MODULE);
+    let parseResult = parse(source);
+
+    // Output intermediate parse result if requested
+    if (emitAst) {
+      let astData = JSON.stringify(parseResult, null, 2);
+      fs.writeFileSync(emitAst, astData, 'utf-8');
+      console.log(`  AST written to ${emitAst}`);
+    }
+
+    // Now compile
     const { compile } = require(COMPILER_MODULE);
     let result = compile(source);
     if (!result.success) {
@@ -208,7 +248,7 @@ function startWatch(watchFiles, runFn) {
   });
 }
 
-const { command, input, output, isWatch } = validateArguments();
+const { command, input, output, isWatch, emitAst } = validateArguments();
 
 if (command === 'parse') {
   if (isWatch) {
@@ -218,9 +258,9 @@ if (command === 'parse') {
   }
 } else if (command === 'compile') {
   if (isWatch) {
-    startWatch([input, PARSER_FILE, COMPILER_FILE], () => runCompile(input, output));
+    startWatch([input, PARSER_FILE, COMPILER_FILE], () => runCompile(input, output, emitAst));
   } else {
-    runCompile(input, output);
+    runCompile(input, output, emitAst);
   }
 }
 
