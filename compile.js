@@ -169,7 +169,7 @@ class FunctionWriter extends CodeWriter {
     yield { type: 'writeLine', content: `function ${this.name}(${this.parameters.join(', ')}) {` };
     yield { type: 'indent', content: '  ' };
     if (this.variables.length > 0) {
-      yield { type: 'write', content: `let ${this.variables.map(v => v.name).join(', ')};` };
+      yield { type: 'writeLine', content: `let ${this.variables.map(v => v.name).join(', ')};` };
     }
     yield* super.write();
     yield { type: 'dedent' };
