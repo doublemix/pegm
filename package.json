@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "cli.js",
   "scripts": {
-    "build-parser:dev": "peggy -w pegm.peggy -o pegm.js"
+    "build-parser:dev": "peggy -w pegm.peggy -o pegm.js",
+    "compile-test:dev": "node cli.js compile -w scratch/test.pegm scratch/test.js --emit-ast scratch/test.json"
   },
   "keywords": [],
   "author": "",
