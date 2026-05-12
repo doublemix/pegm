@@ -1071,6 +1071,11 @@ function compile(input) {
   code.add`\
 if (require.main === module) {
   let input = process.argv[2];
+  let isFile = input === '-f';
+  if (isFile) {
+    const fs = require('fs');
+    input = fs.readFileSync(process.argv[3], 'utf-8');
+  }
   let result = parse(input);
   console.log(JSON.stringify(result, null, 2));
 }`
