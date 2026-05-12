@@ -190,24 +190,24 @@ function tryParse(input) {
   }
 }
 
-function generateExpression(target, expression, code, context, secondaryTargets = [], scope = new Map()) {
-  if (expression.type === 'sequence') generateSequence(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'choice') generateChoice(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'literal') generateLiteral(target, expression, code, context, secondaryTargets);
-  else if (expression.type === 'ruleReference') generateRuleReference(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'class') generateClass(target, expression, code, context, secondaryTargets);
-  else if (expression.type === 'any') generateAny(target, expression, code, context, secondaryTargets);
-  else if (expression.type === 'lookahead') generateLookahead(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'optional') generateOptional(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'repeated') generateRepeated(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'group') generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'text') generateText(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTargets, scope);
-  else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTargets, scope);
+function generateExpression(target, expression, code, context, secondaryTarget = null, scope = new Map()) {
+  if (expression.type === 'sequence') generateSequence(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'choice') generateChoice(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'literal') generateLiteral(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'ruleReference') generateRuleReference(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'class') generateClass(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'any') generateAny(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'lookahead') generateLookahead(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'optional') generateOptional(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'repeated') generateRepeated(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'group') generateExpression(target, expression.expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'text') generateText(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget, scope);
   else throw new Error(`Unknown target type: ${expression.type}`);
 }
 
-function generateChoice(target, expression, code, context, secondaryTargets, scope) {
+function generateChoice(target, expression, code, context, secondaryTarget, scope) {
   let { choices } = expression;
 
   let mark = code.variable('m', { alwaysIncludeIndex: true });
@@ -221,13 +221,16 @@ function generateChoice(target, expression, code, context, secondaryTargets, sco
       code.addLine`if (!${target}.s) ${block}`;
       block.addLine`${mark}.reset();`
     }
-    generateExpression(target, choice, currentCode, context, secondaryTargets, scope);
+    generateExpression(target, choice, currentCode, context, null, scope);
+  }
+  if (secondaryTarget) {
+    assignTargets(code, secondaryTarget, null, raw`${t}`);
   }
 
   mark.free();
 }
 
-function generateSequence(target, expression, code, context, secondaryTargets, scope) {
+function generateSequence(target, expression, code, context, secondaryTarget, scope) {
   let i = 0
   let itemVariables = []
   let currentScope = scope;
@@ -240,7 +243,7 @@ function generateSequence(target, expression, code, context, secondaryTargets, s
     }
     let itemVariable = code.variable('s', { alwaysIncludeIndex: true });
     itemVariables.push(itemVariable);
-    generateExpression(target, item.expression, currentCode, context, [itemVariable, ...secondaryTargets], currentScope)
+    generateExpression(target, item.expression, currentCode, context, itemVariable, currentScope)
     if (item.localNameInfo) {
       currentScope = new Map(currentScope);
       currentScope.set(item.localNameInfo.id, raw`${itemVariable}.v`);
@@ -295,26 +298,29 @@ function generateSequence(target, expression, code, context, secondaryTargets, s
   }
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
-  assignTargets(successBlock, target, secondaryTargets, raw`${context.utils.success}(${returnExpression});`);
+  assignTargets(successBlock, target, null, raw`${context.utils.success}(${returnExpression});`);
+  if (secondaryTarget) {
+    assignTargets(successBlock, secondaryTarget, null, raw`${target}`);
+  }
 
   for (let itemVariable of itemVariables) {
     itemVariable.free();
   }
 }
 
-function assignTargets(code, target, secondaryTargets, assignmentLine) {
+function assignTargets(code, target, secondaryTarget = null, assignmentLine) {
   code.add`${target} = `
-  for (let secondaryTarget of secondaryTargets) {
+  if (secondaryTarget !== null) {
     code.add`${secondaryTarget} = `
   }
   code.addLine`${assignmentLine}`;
 }
 
-function generateLiteral(target, expression, code, context, secondaryTargets) {
-  assignTargets(code, target, secondaryTargets, raw`${context.utils.matchLiteral}(${json(expression.value)});`);
+function generateLiteral(target, expression, code, context, secondaryTarget) {
+  assignTargets(code, target, secondaryTarget, raw`${context.utils.matchLiteral}(${json(expression.value)});`);
 }
 
-function generateRuleReference(target, expression, code, context, secondaryTargets, scope) {
+function generateRuleReference(target, expression, code, context, secondaryTarget, scope) {
   let ruleFunctionCall = raw`${expression.asReference}(`;
 
   if (expression.valueArguments) {
@@ -328,21 +334,21 @@ function generateRuleReference(target, expression, code, context, secondaryTarge
 
   ruleFunctionCall.add`)`;
 
-  assignTargets(code, target, secondaryTargets, ruleFunctionCall);
+  assignTargets(code, target, secondaryTarget, ruleFunctionCall);
 }
 
-function generateClass(target, expression, code, context, secondaryTargets) {
-  assignTargets(code, target, secondaryTargets, raw`${expression.asReference}();`);
+function generateClass(target, expression, code, context, secondaryTarget) {
+  assignTargets(code, target, secondaryTarget, raw`${expression.asReference}();`);
 }
 
-function generateAny(target, expression, code, context, secondaryTargets) {
-  assignTargets(code, target, secondaryTargets, raw`${context.utils.matchAny}();`);
+function generateAny(target, expression, code, context, secondaryTarget) {
+  assignTargets(code, target, secondaryTarget, raw`${context.utils.matchAny}();`);
 }
 
-function generateLookahead(target, expression, code, context, secondaryTargets, scope) {
+function generateLookahead(target, expression, code, context, secondaryTarget, scope) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, [], scope);
+  generateExpression(target, expression.expression, code, context, null, scope);
   if (expression.lookaheadType === 'positive') {
     code.add`if (${target}.s)`
   } else if (expression.lookaheadType === 'negative') {
@@ -351,25 +357,28 @@ function generateLookahead(target, expression, code, context, secondaryTargets, 
   let thenBlock = new BlockWriter(code);
   code.addLine` ${thenBlock}`;
   thenBlock.addLine`${mark}.reset();`
-  assignTargets(thenBlock, target, secondaryTargets, raw`${context.utils.success}(null);`);
+  assignTargets(thenBlock, target, secondaryTarget, raw`${context.utils.success}(null);`);
   let elseBlock = new BlockWriter(code);
   code.addLine`else ${elseBlock}`;
-  assignTargets(elseBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
+  assignTargets(elseBlock, target, secondaryTarget, raw`${context.utils.failure}();`);
   mark.free();
 }
 
-function generateOptional(target, expression, code, context, secondaryTargets, scope) {
+function generateOptional(target, expression, code, context, secondaryTarget, scope) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
+  generateExpression(target, expression.expression, code, context, null, scope);
   let block = new BlockWriter(code);
   code.addLine`if (!${target}.s) ${block}`;
   block.addLine`${mark}.reset();`
-  assignTargets(block, target, secondaryTargets, raw`${context.utils.success}(null);`);
+  assignTargets(block, target, null, raw`${context.utils.success}(null);`);
+  if (secondaryTarget) {
+    assignTargets(code, secondaryTarget, null, raw`${target}`);
+  }
   mark.free();
 }
 
-function generateRepeated(target, expression, code, context, secondaryTargets, scope) {
+function generateRepeated(target, expression, code, context, secondaryTarget, scope) {
   let { expression: repeatedExpression, separator, quantifier } = expression;
 
   let min, max, minVariable, maxVariable, countVariable;
@@ -403,14 +412,14 @@ function generateRepeated(target, expression, code, context, secondaryTargets, s
     throw new Error(`Unhandled quantifier type: ${quantifier.type}`);
   }
 
-  generateRepeatedExpression(target, repeatedExpression, separator, min, max, code, context, secondaryTargets, scope);
+  generateRepeatedExpression(target, repeatedExpression, separator, min, max, code, context, secondaryTarget, scope);
 
   if (countVariable) countVariable.free();
   if (minVariable) minVariable.free();
   if (maxVariable) maxVariable.free();
 }
 
-function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTargets, scope) {
+function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTarget, scope) {
   let results = code.variable('r', { alwaysIncludeIndex: true });
   let needsIndex = max !== null || min !== null || separator !== null;
   let index = needsIndex ? code.variable('i', { alwaysIncludeIndex: true }) : null;
@@ -423,10 +432,10 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
   if (separator !== null) {
     let thenBlock = new BlockWriter(loop);
     loop.addLine`if (${index} > 0) ${thenBlock}`;
-    generateExpression(target, separator, thenBlock, context, [], scope);
+    generateExpression(target, separator, thenBlock, context, null, scope);
     thenBlock.addLine`if (!${target}.s) { break; }`
   }
-  generateExpression(target, expression, loop, context, [], scope);
+  generateExpression(target, expression, loop, context, null, scope);
   loop.addLine`if (!${target}.s) { break; }`
   loop.addLine`${results}.push(${target}.v);`
   if (needsIndex) {
@@ -441,51 +450,54 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
   if (min !== null) {
     let finalBlock = new BlockWriter(code);
     code.addLine`if (${index} < ${min}) ${finalBlock}`;
-    assignTargets(finalBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
+    assignTargets(finalBlock, target, secondaryTarget, raw`${context.utils.failure}();`);
     successBlock = new BlockWriter(code);
     code.addLine`else ${successBlock}`;
   }
-  assignTargets(successBlock, target, secondaryTargets, raw`${context.utils.success}(${results});`);
+  assignTargets(successBlock, target, secondaryTarget, raw`${context.utils.success}(${results});`);
   results.free();
   if (needsIndex) index.free();
   mark.free();
 }
 
-function generateText(target, expression, code, context, secondaryTargets, scope) {
+function generateText(target, expression, code, context, secondaryTarget, scope) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
+  generateExpression(target, expression.expression, code, context, secondaryTarget, scope);
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
-  assignTargets(successBlock, target, secondaryTargets, raw`${context.utils.success}(${mark}.text());`);
+  assignTargets(successBlock, target, secondaryTarget, raw`${context.utils.success}(${mark}.text());`);
   let failureBlock = new BlockWriter(code);
   code.addLine`else ${failureBlock}`;
-  assignTargets(failureBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
+  assignTargets(failureBlock, target, secondaryTarget, raw`${context.utils.failure}();`);
   mark.free();
 }
 
-function generateDefaultValue(target, expression, code, context, secondaryTargets, scope) {
-  generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
+function generateDefaultValue(target, expression, code, context, secondaryTarget, scope) {
+  generateExpression(target, expression.expression, code, context, null, scope);
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
   assignTargets(
     successBlock,
     target,
-    secondaryTargets,
+    null,
     raw`${context.utils.success}(${target}.v ?? ${generateActionCall(expression.defaultValue, scope)});`
   );
+  if (secondaryTarget) {
+    assignTargets(code, secondaryTarget, null, raw`${target}`);
+  }
 }
 
-function generateGuard(target, expression, code, context, secondaryTargets, scope) {
+function generateGuard(target, expression, code, context, secondaryTarget, scope) {
   let result = code.variable('r', { alwaysIncludeIndex: true });
   code.addLine`${result} = ${generateActionCall(expression.action, scope)}`;
   let condition = raw`${result}`;
   let successBlock = new BlockWriter(code);
   code.addLine`if (${condition}) ${successBlock}`;
-  successBlock.addLine`${target} = ${context.utils.success}(null);`
+  assignTargets(successBlock, target, secondaryTarget, raw`${context.utils.success}(null)`);
   let failureBlock = new BlockWriter(code);
   code.addLine`else ${failureBlock}`;
-  failureBlock.addLine`${target} = ${context.utils.failure}();`
+  assignTargets(failureBlock, target, secondaryTarget, raw`${context.utils.failure}();`);
   result.free();
 }
 
@@ -1073,7 +1085,7 @@ function compile(input) {
 
     let t = ruleFn.variable('t');
 
-    generateExpression(t, parsedRule.rule.body, ruleFn, ruleGenerationContext, [], scope);
+    generateExpression(t, parsedRule.rule.body, ruleFn, ruleGenerationContext, null, scope);
 
     ruleFn.addLine`return ${t};`
 
