@@ -462,7 +462,7 @@ function generateDefaultValue(target, expression, code, context, secondaryTarget
 function generateGuard(target, expression, code, context, secondaryTargets, scope) {
   let result = code.variable('r');
   code.addLine`${result} = ${generateActionCall(expression.action, scope)}`;
-  let condition = expression.guardType === 'positive' ? raw`${result}` : raw`!${result}`;
+  let condition = raw`${result}`;
   let successBlock = new BlockWriter(code);
   code.addLine`if (${condition}) ${successBlock}`;
   successBlock.addLine`${target} = ${context.utils.success}(null);`
@@ -570,7 +570,7 @@ function* walkExpression(expression) {
     yield* walkExpression(expression.expression);
   }
   else if (expression.type === 'guard') {
-    yield* walkActionBlock(expression.action);
+    yield* walkJavascriptExpression(expression.action);
   }
   else if (expression.type === 'optional') {
     yield* walkExpression(expression.expression);
@@ -613,10 +613,6 @@ function* walkExpression(expression) {
 
 function* walkJavascriptExpression(expression) {
   yield { type: 'javascriptExpression', node: expression };
-}
-
-function* walkActionBlock(actionBlock) {
-  yield { type: 'actionBlock', node: actionBlock };
 }
 
 function mapSequenceItemForReturnType(item, index) {
@@ -755,7 +751,7 @@ function addSequenceReturnType(sequence) {
 function compile(input) {
   const result = tryParse(input);
   if (!result.success) {
-    return { success: false, error: result.error.message };
+    return { success: false, error: result.error };
   }
 
   let program = result.result;
@@ -1028,19 +1024,9 @@ function compile(input) {
     }
     return actionFunction;
   }
-  function generateActionBlockActionFunction(actionBlock) {
-    let actionFunction = createFunctionForAction(actionBlock.scope);
-    actionFunction.add`${actionBlock.body}`;
-    return actionFunction;
-  }
   for (let node of walkProgram(program)) {
     if (node.type === 'javascriptExpression') {
       let actionFunction = generateJavascriptExpressionActionFunction(node.node);
-      node.node.asReference = actionFunction.asReference;
-    }
-
-    if (node.type === 'actionBlock') {
-      let actionFunction = generateActionBlockActionFunction(node.node);
       node.node.asReference = actionFunction.asReference;
     }
   }

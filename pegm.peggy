@@ -86,14 +86,7 @@ ChoiceExpression
   }
 
 ActionExpression
-  = '@if' _Z _ '(' condition:InsideBalancedParentheses ')' __ expression:ActionExpression {
-      return {
-        type: 'conditional',
-        condition,
-        expression,
-      };
-    }
-  / '@for' _Z _ '(' initializer:InsideBalancedParentheses ')' __ expression:ActionExpression {
+  = FOR _ '(' initializer:InsideBalancedParentheses ')' __ expression:ActionExpression {
       return {
         type: 'loop',
         initializer,
@@ -311,10 +304,12 @@ ClassEscapeSequence
 
 Any
   = '.'
+  / ANY
 
 Guard
-  = '!' action:ActionBlock { return { guardType: 'negative', action }; }
-  / '&' action:ActionBlock { return { guardType: 'positive', action }; }
+  = IF _ action:JavascriptExpression {
+    return { action };
+  }
 
 MatchText
   = '*' expression:JavascriptExpression { return { expression }; }
@@ -392,6 +387,15 @@ HexDigit
 
 Whitespace
   = [ \t\r\n]
+
+FOR
+  = '#for' _Z
+
+IF
+  = '#if' _Z
+
+ANY
+  = '#any' _Z
 
 _
   = Whitespace*
