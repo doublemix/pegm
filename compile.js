@@ -131,16 +131,24 @@ class FunctionWriter extends CodeWriter {
     this.name = null
     this.parameters = [];
     this.variables = [];
+    this.namesInUse = new Set();
   }
 
-  getNameNotInUse(requestedName) {
-    let inUseNames = new Set([...this.parameters, ...this.variables.map(v => v.name)]);
+  getNameNotInUse(requestedName, { alwaysIncludeIndex = false } = {}) {
     let name = requestedName;
-    let suffix = 1;
-    while (inUseNames.has(name)) {
-      name = `${requestedName}_${suffix++}`;
+    let suffix = 0;
+    if (alwaysIncludeIndex) {
+      name = `${requestedName}${suffix++}`;
     }
+    while (this.namesInUse.has(name)) {
+      name = `${requestedName}${suffix++}`;
+    }
+    this.namesInUse.add(name);
     return name;
+  }
+
+  freeVariable(name) {
+    this.namesInUse.delete(name);
   }
 
   parameter(requestedName) {
@@ -149,10 +157,12 @@ class FunctionWriter extends CodeWriter {
     return new Identifier(name);
   }
 
-  variable(requestedName) {
-    let name = this.getNameNotInUse(requestedName);
-    this.variables.push({ name });
-    return new Identifier(name);
+  variable(requestedName, { alwaysIncludeIndex = false } = {}) {
+    let name = this.getNameNotInUse(requestedName, { alwaysIncludeIndex });
+    if (!this.variables.some(v => v.name === name)) {
+      this.variables.push({ name });
+    }
+    return new Variable(name, this);
   }
 
   *write() {
@@ -200,7 +210,7 @@ function generateExpression(target, expression, code, context, secondaryTargets 
 function generateChoice(target, expression, code, context, secondaryTargets, scope) {
   let { choices } = expression;
 
-  let mark = code.variable('m');
+  let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
 
   for (let [i, choice] of enumerate(choices)) {
@@ -213,6 +223,8 @@ function generateChoice(target, expression, code, context, secondaryTargets, sco
     }
     generateExpression(target, choice, currentCode, context, secondaryTargets, scope);
   }
+
+  mark.free();
 }
 
 function generateSequence(target, expression, code, context, secondaryTargets, scope) {
@@ -226,7 +238,7 @@ function generateSequence(target, expression, code, context, secondaryTargets, s
       currentCode = block;
       code.addLine`if (${target}.s) ${block}`;
     }
-    let itemVariable = code.variable('s');
+    let itemVariable = code.variable('s', { alwaysIncludeIndex: true });
     itemVariables.push(itemVariable);
     generateExpression(target, item.expression, currentCode, context, [itemVariable, ...secondaryTargets], currentScope)
     if (item.localNameInfo) {
@@ -284,6 +296,10 @@ function generateSequence(target, expression, code, context, secondaryTargets, s
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
   assignTargets(successBlock, target, secondaryTargets, raw`${context.utils.success}(${returnExpression});`);
+
+  for (let itemVariable of itemVariables) {
+    itemVariable.free();
+  }
 }
 
 function assignTargets(code, target, secondaryTargets, assignmentLine) {
@@ -324,7 +340,7 @@ function generateAny(target, expression, code, context, secondaryTargets) {
 }
 
 function generateLookahead(target, expression, code, context, secondaryTargets, scope) {
-  let mark = code.variable('m');
+  let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
   generateExpression(target, expression.expression, code, context, [], scope);
   if (expression.lookaheadType === 'positive') {
@@ -339,22 +355,24 @@ function generateLookahead(target, expression, code, context, secondaryTargets, 
   let elseBlock = new BlockWriter(code);
   code.addLine`else ${elseBlock}`;
   assignTargets(elseBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
+  mark.free();
 }
 
 function generateOptional(target, expression, code, context, secondaryTargets, scope) {
-  let mark = code.variable('m');
+  let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
   generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
   let block = new BlockWriter(code);
   code.addLine`if (!${target}.s) ${block}`;
   block.addLine`${mark}.reset();`
   assignTargets(block, target, secondaryTargets, raw`${context.utils.success}(null);`);
+  mark.free();
 }
 
 function generateRepeated(target, expression, code, context, secondaryTargets, scope) {
   let { expression: repeatedExpression, separator, quantifier } = expression;
 
-  let min, max;
+  let min, max, minVariable, maxVariable, countVariable;
   if (quantifier.type === 'zeroOrMore') {
     min = null;
     max = null;
@@ -362,20 +380,20 @@ function generateRepeated(target, expression, code, context, secondaryTargets, s
     min = raw`1`;
     max = null;
   } else if (quantifier.type === 'count') {
-    let countVariable = code.variable('count')
+    countVariable = code.variable('count', { alwaysIncludeIndex: true });
     code.addLine`${countVariable} = ${generateActionCall(quantifier.count, scope)};`
     min = countVariable;
     max = countVariable;
   } else if (quantifier.type === 'range') {
     if (quantifier.min) {
-      let minVariable = code.variable('min');
+      minVariable = code.variable('min', { alwaysIncludeIndex: true });
       code.addLine`${minVariable} = ${generateActionCall(quantifier.min, scope)};`
       min = minVariable;
     } else {
       min = null;
     }
     if (quantifier.max) {
-      let maxVariable = code.variable('max');
+      maxVariable = code.variable('max', { alwaysIncludeIndex: true });
       code.addLine`${maxVariable} = ${generateActionCall(quantifier.max, scope)};`
       max = maxVariable;
     } else {
@@ -386,13 +404,17 @@ function generateRepeated(target, expression, code, context, secondaryTargets, s
   }
 
   generateRepeatedExpression(target, repeatedExpression, separator, min, max, code, context, secondaryTargets, scope);
+
+  if (countVariable) countVariable.free();
+  if (minVariable) minVariable.free();
+  if (maxVariable) maxVariable.free();
 }
 
 function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTargets, scope) {
-  let results = code.variable('r');
+  let results = code.variable('r', { alwaysIncludeIndex: true });
   let needsIndex = max !== null || min !== null || separator !== null;
-  let index = needsIndex ? code.variable('i') : null;
-  let mark = code.variable('m');
+  let index = needsIndex ? code.variable('i', { alwaysIncludeIndex: true }) : null;
+  let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${results} = [];`
   if (needsIndex) code.addLine`${index} = 0;`
   code.addLine`${mark} = ${context.utils.mark}();`
@@ -424,10 +446,13 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
     code.addLine`else ${successBlock}`;
   }
   assignTargets(successBlock, target, secondaryTargets, raw`${context.utils.success}(${results});`);
+  results.free();
+  if (needsIndex) index.free();
+  mark.free();
 }
 
 function generateText(target, expression, code, context, secondaryTargets, scope) {
-  let mark = code.variable('m');
+  let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
   generateExpression(target, expression.expression, code, context, secondaryTargets, scope);
   let successBlock = new BlockWriter(code);
@@ -436,6 +461,7 @@ function generateText(target, expression, code, context, secondaryTargets, scope
   let failureBlock = new BlockWriter(code);
   code.addLine`else ${failureBlock}`;
   assignTargets(failureBlock, target, secondaryTargets, raw`${context.utils.failure}();`);
+  mark.free();
 }
 
 function generateDefaultValue(target, expression, code, context, secondaryTargets, scope) {
@@ -451,7 +477,7 @@ function generateDefaultValue(target, expression, code, context, secondaryTarget
 }
 
 function generateGuard(target, expression, code, context, secondaryTargets, scope) {
-  let result = code.variable('r');
+  let result = code.variable('r', { alwaysIncludeIndex: true });
   code.addLine`${result} = ${generateActionCall(expression.action, scope)}`;
   let condition = raw`${result}`;
   let successBlock = new BlockWriter(code);
@@ -460,6 +486,7 @@ function generateGuard(target, expression, code, context, secondaryTargets, scop
   let failureBlock = new BlockWriter(code);
   code.addLine`else ${failureBlock}`;
   failureBlock.addLine`${target} = ${context.utils.failure}();`
+  result.free();
 }
 
 function generateActionCall(action, scope) {
@@ -497,8 +524,8 @@ class BlockWriter extends CodeWriter {
     this.parent = parent;
   }
 
-  variable(requestedName) {
-    return this.parent.variable(requestedName);
+  variable(requestedName, options) {
+    return this.parent.variable(requestedName, options);
   }
 
   *write() {
@@ -517,6 +544,17 @@ class Identifier {
 
   *write() {
     yield { type: 'write', content: this.name };
+  }
+}
+
+class Variable extends Identifier {
+  constructor(name, parentFunction) {
+    super(name);
+    this.parentFunction = parentFunction;
+  }
+
+  free() {
+    this.parentFunction.freeVariable(this.name);
   }
 }
 
