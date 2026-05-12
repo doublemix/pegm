@@ -194,7 +194,7 @@ function runCompile(input, output, emitAst) {
     console.log(`Successfully compiled ${input} -> ${output}`);
   } catch (error) {
     console.error('Compilation failed with errors:');
-    console.error(error.message || error);
+    console.error(error);
     // Clear output file on failure
     fs.writeFileSync(output, '', 'utf-8');
   }
