@@ -810,7 +810,7 @@ function compile(input) {
   code.addLine`${parseFn}`;
   let peg$source = parseFn.parameter('peg$source');
   let peg$index = parseFn.variable('peg$index');
-  code.addLine`${peg$index} = 0;`
+  parseFn.addLine`${peg$index} = 0;`
   let success = parseFunction(function peg$success(value) {
     return { s: true, v: value };
   });
