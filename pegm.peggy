@@ -23,13 +23,22 @@ PerParseInitializer
     }
 
 Rule
-  = name:Identifier parameters:RuleParameters? _ Equals _ body:Expression EndOfStatement {
+  = ruleInfo:RuleHeader _ body:Expression EndOfStatement {
+    const { name, parameters } = ruleInfo;
     return {
       name,
       templateParameters: parameters?.templateParameters ?? [],
       valueParameters: parameters?.valueParameters ?? [],
       body,
     }
+  }
+
+RuleHeader
+  = name:Identifier parameters:RuleParameters? _ Equals {
+    return {
+      name,
+      parameters,
+    };
   }
 
 Equals
@@ -240,7 +249,7 @@ PrimaryExpression
   / info:MatchText { return { type: 'matchText', ...info }; }
 
 RuleReference
-  = name:Identifier args:RuleArguments? !(__ Equals) {
+  = !RuleHeader name:Identifier args:RuleArguments? {
     return {
       type: 'ruleReference',
       name,
@@ -342,7 +351,7 @@ BalancedBracesElement
   / BalancedBraces
 
 Integer
-  = digits:$[0-9]+ { return { type: 'literal', value: parseInt(digits, 10) }; }
+  = digits:$[0-9]+ { return parseInt(digits, 10) }
 
 Identifier
   = name:$(IdStart IdContinue*) _Z { return name; }
