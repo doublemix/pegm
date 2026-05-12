@@ -151,9 +151,9 @@ class FunctionWriter extends CodeWriter {
     this.namesInUse.delete(name);
   }
 
-  parameter(requestedName) {
+  parameter(requestedName, initializer) {
     let name = this.getNameNotInUse(requestedName);
-    this.parameters.push(name);
+    this.parameters.push({ name, initializer });
     return new Identifier(name);
   }
 
@@ -166,7 +166,20 @@ class FunctionWriter extends CodeWriter {
   }
 
   *write() {
-    yield { type: 'writeLine', content: `function ${this.name}(${this.parameters.join(', ')}) {` };
+    yield { type: 'write', content: `function ${this.name}` };
+    yield { type: 'write', content: '(' };
+    for (let [index, parameter] of enumerate(this.parameters)) {
+      if (index > 0) {
+        yield { type: 'write', content: ', ' };
+      }
+      yield { type: 'write', content: parameter.name };
+      if (parameter.initializer) {
+        yield { type: 'write', content: ' = ' };
+        yield* parameter.initializer.write();
+      }
+    }
+    yield { type: 'write', content: ')' };
+    yield { type: 'writeLine', content: ' {' };
     yield { type: 'indent', content: '  ' };
     if (this.variables.length > 0) {
       yield { type: 'writeLine', content: `let ${this.variables.map(v => v.name).join(', ')};` };
@@ -589,6 +602,11 @@ function* walkProgram(program) {
 
 function* walkRule(rule) {
   yield { type: 'rule', node: rule };
+  for (let parameter of rule.valueParameters) {
+    if (parameter.defaultValue) {
+      yield* walkJavascriptExpression(parameter.defaultValue);
+    }
+  }
   yield* walkExpression(rule.body);
 }
 
@@ -1023,7 +1041,10 @@ function compile(input) {
     }
     let scope = [];
     for (let parameter of rule.valueParameters) {
-      scope.push(parameter.localNameInfo);
+      if (parameter.defaultValue) {
+        parameter.defaultValue.scope = scope;
+      }
+      scope = [...scope, parameter.localNameInfo];
     }
     walkExpressionWithScope(rule.body, scope);
   }
@@ -1079,7 +1100,11 @@ function compile(input) {
 
     let scope = new Map();
     for (let parameter of parsedRule.rule.valueParameters) {
-      let addedParameter = ruleFn.parameter('peg$param$' + parameter.localNameInfo.resolvedLocalName);
+      let initializer = null;
+      if (parameter.defaultValue) {
+        initializer = generateActionCall(parameter.defaultValue, scope)
+      }
+      let addedParameter = ruleFn.parameter('peg$param$' + parameter.localNameInfo.resolvedLocalName, initializer);
       scope.set(parameter.localNameInfo.id, addedParameter);
     }
 
