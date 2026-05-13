@@ -729,31 +729,20 @@ function addSequenceReturnType(sequence) {
     if (hasStandardPluck) returnType = 'standard'
     if (hasNamedPluck) returnType = 'named';
 
-    /* TODO implement checking for ALL code blocks */
-    let hasCodeBlock = hasActionBlock;
-
-    let hasExplicitLocalNamed = items.some(item => item.hasExplicitLocalName);
-
-    if (!returnType && hasExplicitLocalNamed && !hasCodeBlock) {
-      returnType = 'named';
-      isImplicitNamedReturn = true;
-    }
-
     if (!returnType) {
       returnType = 'standard';
     }
 
     let pickedItems
 
-    if (isImplicitNamedReturn) pickedItems = items.filter(item => item.hasExplicitLocalName || item.isSpread);
-    else if (hasPluck) pickedItems = items.filter(item => item.isPluck || item.isSpread);
+    if (hasPluck) pickedItems = items.filter(item => item.isPluck || item.isSpread);
     else pickedItems = items.slice();
 
     if (returnType === 'named') {
       returnInfo = {
         type: 'named',
         items: pickedItems.map(item => {
-          let name = item.isSpread ? null : isImplicitNamedReturn ? item.localName : item.pluckName;
+          let name = item.isSpread ? null : item.pluckName;
           return {
             index: item.index,
             key: name,
