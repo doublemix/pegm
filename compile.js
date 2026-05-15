@@ -166,7 +166,10 @@ class FunctionWriter extends CodeWriter {
   }
 
   *write() {
-    yield { type: 'write', content: `function ${this.name}` };
+    yield { type: 'write', content: `function ` };
+    if (this.name) {
+      yield { type: 'write', content: this.name };
+    }
     yield { type: 'write', content: '(' };
     for (let [index, parameter] of enumerate(this.parameters)) {
       if (index > 0) {
@@ -203,24 +206,40 @@ function tryParse(input) {
   }
 }
 
-function generateExpression(target, expression, code, context, secondaryTarget = null, scope = new Map()) {
-  if (expression.type === 'sequence') generateSequence(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'choice') generateChoice(target, expression, code, context, secondaryTarget, scope);
+function generateInlineRule(expression, context) {
+  let ruleFunction = createFunction()
+
+  generateRuleFunctionBody(ruleFunction, expression, context)
+
+  return ruleFunction;
+}
+
+function generateRuleFunctionBody(ruleFn, expression, context) {
+  let t = ruleFn.variable('t');
+
+  generateExpression(t, expression, ruleFn, context, null);
+
+  ruleFn.addLine`return ${t};`
+}
+
+function generateExpression(target, expression, code, context, secondaryTarget = null) {
+  if (expression.type === 'sequence') generateSequence(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'choice') generateChoice(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'literal') generateLiteral(target, expression, code, context, secondaryTarget);
-  else if (expression.type === 'ruleReference') generateRuleReference(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'ruleReference') generateRuleReference(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'class') generateClass(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'any') generateAny(target, expression, code, context, secondaryTarget);
-  else if (expression.type === 'lookahead') generateLookahead(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'optional') generateOptional(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'repeated') generateRepeated(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'group') generateExpression(target, expression.expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'text') generateText(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTarget, scope);
-  else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget, scope);
+  else if (expression.type === 'lookahead') generateLookahead(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'optional') generateOptional(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'repeated') generateRepeated(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'group') generateExpression(target, expression.expression, code, context, secondaryTarget);
+  else if (expression.type === 'text') generateText(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget);
   else throw new Error(`Unknown target type: ${expression.type}`);
 }
 
-function generateChoice(target, expression, code, context, secondaryTarget, scope) {
+function generateChoice(target, expression, code, context, secondaryTarget) {
   let { choices } = expression;
 
   let mark = code.variable('m', { alwaysIncludeIndex: true });
@@ -234,7 +253,7 @@ function generateChoice(target, expression, code, context, secondaryTarget, scop
       code.addLine`if (!${target}.s) ${block}`;
       block.addLine`${mark}.reset();`
     }
-    generateExpression(target, choice, currentCode, context, null, scope);
+    generateExpression(target, choice, currentCode, context, null);
   }
   if (secondaryTarget) {
     assignTargets(code, secondaryTarget, null, raw`${t}`);
@@ -243,10 +262,10 @@ function generateChoice(target, expression, code, context, secondaryTarget, scop
   mark.free();
 }
 
-function generateSequence(target, expression, code, context, secondaryTarget, scope) {
+function generateSequence(target, expression, code, context, secondaryTarget) {
   let i = 0
   let itemVariables = []
-  let currentScope = scope;
+  let currentScope = context.scope;
   for (let item of expression.items) {
     let currentCode = code
     if (i > 0) {
@@ -256,7 +275,7 @@ function generateSequence(target, expression, code, context, secondaryTarget, sc
     }
     let itemVariable = code.variable('s', { alwaysIncludeIndex: true });
     itemVariables.push(itemVariable);
-    generateExpression(target, item.expression, currentCode, context, itemVariable, currentScope)
+    generateExpression(target, item.expression, currentCode, { ...context, scope: currentScope }, itemVariable)
     if (item.localNameInfo) {
       currentScope = new Map(currentScope);
       currentScope.set(item.localNameInfo.id, raw`${itemVariable}.v`);
@@ -333,15 +352,52 @@ function generateLiteral(target, expression, code, context, secondaryTarget) {
   assignTargets(code, target, secondaryTarget, raw`${context.utils.matchLiteral}(${json(expression.value)});`);
 }
 
-function generateRuleReference(target, expression, code, context, secondaryTarget, scope) {
-  let ruleFunctionCall = raw`${expression.asReference}(`;
+function generateRuleReference(target, expression, code, context, secondaryTarget) {
+  let asReference;
 
-  if (expression.valueArguments) {
-    for (let [index, argument] of enumerate(expression.valueArguments)) {
-      if (index > 0) {
+  if (expression.referenceInfo.type === 'rule') {
+    asReference = expression.referenceInfo.rule.asReference;
+  } else if (expression.referenceInfo.type === 'templateParameter') {
+    let { parameter: templateParameter } = expression.referenceInfo;
+    let { name } = templateParameter;
+    let templateParameterValue = context.templateScope.get(name);
+    asReference = templateParameterValue;
+  }
+
+  let ruleFunctionCall = raw`${asReference}(`;
+
+  let referenceInfo = expression.referenceInfo;
+
+  let overallParameterIndex = 0;
+
+  if (referenceInfo.type === 'rule') {
+    let { templateParameters } = referenceInfo.rule.rule;
+
+    for (let [parameterIndex, templateParameter] of enumerate(templateParameters)) {
+      if (overallParameterIndex > 0) {
         ruleFunctionCall.add`, `
       }
-      ruleFunctionCall.add`${generateActionCall(argument, scope)}`;
+
+      let argumentExpression = expression.templateArguments?.[parameterIndex] ?? null;
+      if (argumentExpression !== null) {
+        let argumentRuleFunction = generateInlineRule(argumentExpression, context);
+        ruleFunctionCall.add`${argumentRuleFunction}`;
+      } else {
+        ruleFunctionCall.add`undefined`;
+      }
+
+      overallParameterIndex++;
+    }
+  }
+
+  if (expression.valueArguments) {
+    for (let argument of expression.valueArguments) {
+      if (overallParameterIndex > 0) {
+        ruleFunctionCall.add`, `
+      }
+      ruleFunctionCall.add`${generateActionCall(argument, context.scope)}`;
+
+      overallParameterIndex++;
     }
   }
 
@@ -358,10 +414,10 @@ function generateAny(target, expression, code, context, secondaryTarget) {
   assignTargets(code, target, secondaryTarget, raw`${context.utils.matchAny}();`);
 }
 
-function generateLookahead(target, expression, code, context, secondaryTarget, scope) {
+function generateLookahead(target, expression, code, context, secondaryTarget) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, null, scope);
+  generateExpression(target, expression.expression, code, context, null);
   if (expression.lookaheadType === 'positive') {
     code.add`if (${target}.s)`
   } else if (expression.lookaheadType === 'negative') {
@@ -377,10 +433,10 @@ function generateLookahead(target, expression, code, context, secondaryTarget, s
   mark.free();
 }
 
-function generateOptional(target, expression, code, context, secondaryTarget, scope) {
+function generateOptional(target, expression, code, context, secondaryTarget) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, null, scope);
+  generateExpression(target, expression.expression, code, context, null);
   let block = new BlockWriter(code);
   code.addLine`if (!${target}.s) ${block}`;
   block.addLine`${mark}.reset();`
@@ -391,7 +447,7 @@ function generateOptional(target, expression, code, context, secondaryTarget, sc
   mark.free();
 }
 
-function generateRepeated(target, expression, code, context, secondaryTarget, scope) {
+function generateRepeated(target, expression, code, context, secondaryTarget) {
   let { expression: repeatedExpression, separator, quantifier } = expression;
 
   let min, max, minVariable, maxVariable, countVariable;
@@ -403,20 +459,20 @@ function generateRepeated(target, expression, code, context, secondaryTarget, sc
     max = null;
   } else if (quantifier.type === 'count') {
     countVariable = code.variable('count', { alwaysIncludeIndex: true });
-    code.addLine`${countVariable} = ${generateActionCall(quantifier.count, scope)};`
+    code.addLine`${countVariable} = ${generateActionCall(quantifier.count, context.scope)};`
     min = countVariable;
     max = countVariable;
   } else if (quantifier.type === 'range') {
     if (quantifier.min) {
       minVariable = code.variable('min', { alwaysIncludeIndex: true });
-      code.addLine`${minVariable} = ${generateActionCall(quantifier.min, scope)};`
+      code.addLine`${minVariable} = ${generateActionCall(quantifier.min, context.scope)};`
       min = minVariable;
     } else {
       min = null;
     }
     if (quantifier.max) {
       maxVariable = code.variable('max', { alwaysIncludeIndex: true });
-      code.addLine`${maxVariable} = ${generateActionCall(quantifier.max, scope)};`
+      code.addLine`${maxVariable} = ${generateActionCall(quantifier.max, context.scope)};`
       max = maxVariable;
     } else {
       max = null;
@@ -425,14 +481,14 @@ function generateRepeated(target, expression, code, context, secondaryTarget, sc
     throw new Error(`Unhandled quantifier type: ${quantifier.type}`);
   }
 
-  generateRepeatedExpression(target, repeatedExpression, separator, min, max, code, context, secondaryTarget, scope);
+  generateRepeatedExpression(target, repeatedExpression, separator, min, max, code, context, secondaryTarget);
 
   if (countVariable) countVariable.free();
   if (minVariable) minVariable.free();
   if (maxVariable) maxVariable.free();
 }
 
-function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTarget, scope) {
+function generateRepeatedExpression(target, expression, separator, min, max, code, context, secondaryTarget) {
   let results = code.variable('r', { alwaysIncludeIndex: true });
   let needsIndex = max !== null || min !== null || separator !== null;
   let index = needsIndex ? code.variable('i', { alwaysIncludeIndex: true }) : null;
@@ -445,10 +501,10 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
   if (separator !== null) {
     let thenBlock = new BlockWriter(loop);
     loop.addLine`if (${index} > 0) ${thenBlock}`;
-    generateExpression(target, separator, thenBlock, context, null, scope);
+    generateExpression(target, separator, thenBlock, context, null);
     thenBlock.addLine`if (!${target}.s) { break; }`
   }
-  generateExpression(target, expression, loop, context, null, scope);
+  generateExpression(target, expression, loop, context, null);
   loop.addLine`if (!${target}.s) { break; }`
   loop.addLine`${results}.push(${target}.v);`
   if (needsIndex) {
@@ -473,10 +529,10 @@ function generateRepeatedExpression(target, expression, separator, min, max, cod
   mark.free();
 }
 
-function generateText(target, expression, code, context, secondaryTarget, scope) {
+function generateText(target, expression, code, context, secondaryTarget) {
   let mark = code.variable('m', { alwaysIncludeIndex: true });
   code.addLine`${mark} = ${context.utils.mark}();`
-  generateExpression(target, expression.expression, code, context, secondaryTarget, scope);
+  generateExpression(target, expression.expression, code, context, secondaryTarget);
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
   assignTargets(successBlock, target, secondaryTarget, raw`${context.utils.success}(${mark}.text());`);
@@ -486,24 +542,24 @@ function generateText(target, expression, code, context, secondaryTarget, scope)
   mark.free();
 }
 
-function generateDefaultValue(target, expression, code, context, secondaryTarget, scope) {
-  generateExpression(target, expression.expression, code, context, null, scope);
+function generateDefaultValue(target, expression, code, context, secondaryTarget) {
+  generateExpression(target, expression.expression, code, context, null);
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
   assignTargets(
     successBlock,
     target,
     null,
-    raw`${context.utils.success}(${target}.v ?? ${generateActionCall(expression.defaultValue, scope)});`
+    raw`${context.utils.success}(${target}.v ?? ${generateActionCall(expression.defaultValue, context.scope)});`
   );
   if (secondaryTarget) {
     assignTargets(code, secondaryTarget, null, raw`${target}`);
   }
 }
 
-function generateGuard(target, expression, code, context, secondaryTarget, scope) {
+function generateGuard(target, expression, code, context, secondaryTarget) {
   let result = code.variable('r', { alwaysIncludeIndex: true });
-  code.addLine`${result} = ${generateActionCall(expression.action, scope)}`;
+  code.addLine`${result} = ${generateActionCall(expression.action, context.scope)}`;
   let condition = raw`${result}`;
   let successBlock = new BlockWriter(code);
   code.addLine`if (${condition}) ${successBlock}`;
@@ -602,6 +658,11 @@ function* walkProgram(program) {
 
 function* walkRule(rule) {
   yield { type: 'rule', node: rule };
+  for (let parameter of rule.templateParameters) {
+    if (parameter.defaultValue) {
+      yield* walkExpression(parameter.defaultValue);
+    }
+  }
   for (let parameter of rule.valueParameters) {
     if (parameter.defaultValue) {
       yield* walkJavascriptExpression(parameter.defaultValue);
@@ -658,6 +719,11 @@ function* walkExpression(expression) {
   else if (expression.type === 'class') { }
   else if (expression.type === 'literal') { }
   else if (expression.type === 'ruleReference') {
+    if (expression.templateArguments) {
+      for (let argument of expression.templateArguments) {
+        yield* walkExpression(argument);
+      }
+    }
     if (expression.valueArguments) {
       for (let argument of expression.valueArguments) {
         yield* walkJavascriptExpression(argument);
@@ -918,15 +984,70 @@ function compile(input) {
 
   /* resolve rule references */
   for (let parsedRule of parsedRules) {
-    let body = parsedRule.rule.body;
-    for (let node of walkExpression(body)) {
+    let rule = parsedRule.rule
+
+    let templateParameterMap = new Map();
+
+    for (let parameter of rule.templateParameters) {
+      templateParameterMap.set(parameter.name, parameter);
+    }
+
+    for (let node of walkRule(rule)) {
       if (node.type === 'expression' && node.node.type === 'ruleReference') {
         let ruleReference = node.node;
-        let referencedRule = ruleMap.get(ruleReference.name);
-        if (!referencedRule) {
+        let referenceInfo;
+
+        let templateRuleReference = templateParameterMap.get(ruleReference.name);
+        if (templateRuleReference) {
+          referenceInfo = {
+            type: 'templateParameter',
+            parameter: templateRuleReference,
+          }
+        }
+
+        if (!referenceInfo) {
+          let referencedRule = ruleMap.get(ruleReference.name);
+
+          if (referencedRule) {
+
+            referenceInfo = {
+              type: 'rule',
+              rule: referencedRule,
+            };
+          }
+        }
+
+        if (!referenceInfo) {
           throw new Error(`Undefined rule: ${ruleReference.name}`);
         }
-        ruleReference.asReference = referencedRule.asReference;
+
+        ruleReference.referenceInfo = referenceInfo;
+      }
+    }
+  }
+
+  /* ensure template parameter references have values */
+  for (let node of walkProgram(program)) {
+    if (node.type === 'expression' && node.node.type === 'ruleReference') {
+      let ruleReference = node.node;
+      if (ruleReference.referenceInfo.type === 'templateParameter') {
+        // template parameter references don't support template arguments
+        if (ruleReference.templateArguments) {
+          throw new Error(`Template parameter reference cannot have template arguments: ${ruleReference.name}`);
+        }
+        if (ruleReference.valueArguments) {
+          throw new Error(`Template parameter reference cannot have value arguments: ${ruleReference.name}`);
+        }
+      }
+      if (ruleReference.referenceInfo.type === 'rule') {
+        let rule = node.node.referenceInfo.rule.rule;
+        let templateArguments = ruleReference.templateArguments ?? [];
+        for (let [index, parameter] of enumerate(rule.templateParameters)) {
+          let argument = templateArguments[index] ?? null;
+          if (argument === null && parameter.defaultValue === null) {
+            throw new Error(`Missing template argument for parameter ${parameter.name} in reference to rule ${rule.name}`);
+          }
+        }
       }
     }
   }
@@ -1084,8 +1205,21 @@ function compile(input) {
     }
   }
 
-  for (let parsedRule of parsedRules) {
+
+  function generateRule(parsedRule) {
+    const { rule, ruleFunctionName } = parsedRule;
+
     let ruleFn = createFunction({ name: parsedRule.ruleFunctionName });
+
+    /* TODO: it might be nice for template scope to use a resolved ID like value parameters, but not necessary currently, because they can't introduce inside rules */
+    let templateScope = new Map();
+
+    for (let parameter of parsedRule.rule.templateParameters) {
+      let initializer = null;
+      let addedTemplateParameter = ruleFn.parameter('peg$tparam$' + parameter.name);
+      parameter.functionParameter = addedTemplateParameter;
+      templateScope.set(parameter.name, addedTemplateParameter);
+    }
 
     let scope = new Map();
     for (let parameter of parsedRule.rule.valueParameters) {
@@ -1097,12 +1231,26 @@ function compile(input) {
       scope.set(parameter.localNameInfo.id, addedParameter);
     }
 
-    let t = ruleFn.variable('t');
+    let context = {
+      utils: ruleGenerationContext.utils,
+      scope,
+      templateScope
+    }
 
-    generateExpression(t, parsedRule.rule.body, ruleFn, ruleGenerationContext, null, scope);
+    for (let parameter of parsedRule.rule.templateParameters) {
+      if (parameter.defaultValue) {
+        let initializer = generateInlineRule(parameter.defaultValue, context);
+        ruleFn.addLine`if (${parameter.functionParameter} === undefined) { ${parameter.functionParameter} = ${initializer}; }`
+      }
+    }
 
-    ruleFn.addLine`return ${t};`
+    generateRuleFunctionBody(ruleFn, rule.body, context);
 
+    return ruleFn;
+  }
+
+  for (let parsedRule of parsedRules) {
+    let ruleFn = generateRule(parsedRule);
     parseFn.addLine`${ruleFn}`;
   }
 
