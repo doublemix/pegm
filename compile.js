@@ -236,6 +236,7 @@ function generateExpression(target, expression, code, context, secondaryTarget =
   else if (expression.type === 'text') generateText(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'matchText') generateMatchText(target, expression, code, context, secondaryTarget);
   else throw new Error(`Unknown target type: ${expression.type}`);
 }
 
@@ -349,7 +350,7 @@ function assignTargets(code, target, secondaryTarget = null, assignmentLine) {
 }
 
 function generateLiteral(target, expression, code, context, secondaryTarget) {
-  assignTargets(code, target, secondaryTarget, raw`${context.utils.matchLiteral}(${json(expression.value)});`);
+  assignTargets(code, target, secondaryTarget, raw`${context.utils.matchText}(${json(expression.value)});`);
 }
 
 function generateRuleReference(target, expression, code, context, secondaryTarget) {
@@ -570,6 +571,13 @@ function generateGuard(target, expression, code, context, secondaryTarget) {
   result.free();
 }
 
+function generateMatchText(target, expression, code, context, secondaryTarget) {
+  let textToMatch = code.variable('tt', { alwaysIncludeIndex: true });
+  code.addLine`${textToMatch} = ${generateActionCall(expression.expression, context.scope)};`
+  assignTargets(code, target, secondaryTarget, raw`${context.utils.matchText}(${textToMatch})`);
+  textToMatch.free();
+}
+
 function generateActionCall(action, scope) {
   let result = raw`${action.asReference}(`;
 
@@ -731,6 +739,9 @@ function* walkExpression(expression) {
     }
   }
   else if (expression.type === 'any') { }
+  else if (expression.type === 'matchText') {
+    yield* walkJavascriptExpression(expression.expression);
+  }
   else {
     throw new Error(`Unknown expression type: ${expression.type}`);
   }
@@ -893,15 +904,15 @@ function compile(input) {
   });
   parseFn.addLine`${failure}`;
 
-  let matchLiteralFn = parseFunction(function peg$matchLiteral(literal) {
-    if (peg$source.substr(peg$index, literal.length) === literal) {
-      peg$index += literal.length;
-      return peg$success(literal);
+  let matchTextFn = parseFunction(function peg$matchText(text) {
+    if (peg$source.substr(peg$index, text.length) === text) {
+      peg$index += text.length;
+      return peg$success(text);
     } else {
       return peg$failure();
     }
   })
-  parseFn.addLine`${matchLiteralFn}`;
+  parseFn.addLine`${matchTextFn}`;
 
   let matchAnyFn = parseFunction(function peg$matchAny() {
     if (peg$index < peg$source.length) {
@@ -930,7 +941,7 @@ function compile(input) {
 
   let ruleGenerationContext = {
     utils: {
-      matchLiteral: matchLiteralFn.asReference,
+      matchText: matchTextFn.asReference,
       matchAny: matchAnyFn.asReference,
       mark: markFn.asReference,
       success: success.asReference,
@@ -1143,6 +1154,10 @@ function compile(input) {
         handled = true;
       }
       if (expression.type === 'class' || expression.type === 'literal' || expression.type === 'any') {
+        handled = true;
+      }
+      if (expression.type === 'matchText') {
+        expression.expression.scope = scope;
         handled = true;
       }
       if (!handled) {
