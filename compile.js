@@ -1451,6 +1451,8 @@ if (require.main === module) {
   }
   let result = parse(input);
   console.log(JSON.stringify(result, null, 2));
+} else {
+  module.exports = { parse: ${parseFn.asReference} };
 }`
 
   return { success: true, code: formatWriter(code) };
