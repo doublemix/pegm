@@ -188,10 +188,10 @@ class FunctionWriter extends CodeWriter {
   variable(requestedName, { alwaysIncludeIndex = false } = {}) {
     let name = this.getNonConflictingName(requestedName, { alwaysIncludeIndex });
     if (!this.variables.some(v => v.name === name)) {
-      this.namesInUse.add(name);
       this.namesDeclared.add(name);
       this.variables.push({ name });
     }
+    this.namesInUse.add(name);
     return new Variable(name, this);
   }
 
