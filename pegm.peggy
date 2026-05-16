@@ -95,7 +95,7 @@ ChoiceExpression
   }
 
 ActionExpression
-  = FOR _ isAny:(FOR_ANY _)? '(' _ loopVariable:Identifier _ FOR_IN _ iterable:JavascriptExpression _ ')' __ expression:ActionExpression {
+  = FOR __ isAny:(FOR_ANY __)? '(' _ loopVariable:Identifier ':' iterable:JavascriptExpressionInsideParentheses ')' __ expression:ActionExpression {
       return {
         type: 'iterated',
         generationType: isAny ? 'choice' : 'sequence',
@@ -331,6 +331,13 @@ JavascriptExpression
   / value:String { return { type: 'literal', value }; }
   / '(' expression:InsideBalancedParentheses ')' { return { type: 'expression', expression }; }
   / block:ActionBlock { return { type: 'block', body: block.body }; }
+
+JavascriptExpressionInsideParentheses
+  = _ name:Identifier _ &")" { return { type: 'identifier', name }; }
+  / _ value:Integer _ &")" { return { type: 'literal', value }; }
+  / _ value:String _ &")" { return { type: 'literal', value }; }
+  / _ block:ActionBlock _ &")" { return { type: 'block', body: block.body }; }
+  / expression:InsideBalancedParentheses &")" { return { type: 'expression', expression }; }
 
 BalancedParentheses
   = '(' InsideBalancedParentheses ')'
