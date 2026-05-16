@@ -113,6 +113,10 @@ class CodeWriter {
     this.instructions.push({ type: 'writeLine', content: '' });
   }
 
+  setIndent(indent) {
+    this.instructions.push({ type: 'setIndent', content: indent });
+  }
+
   indent(additionalIndentation = '  ') {
     this.instructions.push({ type: 'indent', content: additionalIndentation })
   }
@@ -1008,6 +1012,12 @@ function compile(input) {
 
   let code = new CodeWriter();
 
+  if (program.fileInitializer) {
+    code.setIndent('');
+    code.addLine`${program.fileInitializer}`;
+    code.dedent();
+  }
+
   let parseFn = createFunction({ name: 'parse' });
   code.addLine`${parseFn}`;
   let peg$source = parseFn.parameter('peg$source');
@@ -1423,6 +1433,11 @@ function compile(input) {
   let parsedStartRule = ruleMap.get(startRule.name);
   if (!parsedStartRule) {
     throw new Error(`Start rule not found: ${startRule.name}`);
+  }
+  if (program.initializer) {
+    parseFn.setIndent('')
+    parseFn.addLine`${program.initializer}`;
+    parseFn.dedent();
   }
   parseFn.addLine`return parseFullSource(${parsedStartRule.asReference})();`
 

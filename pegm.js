@@ -279,10 +279,10 @@ function peg$parse(input, options) {
   const peg$e54 = peg$literalExpectation("\r\n", false);
   const peg$e55 = peg$classExpectation(["\n", "\r"], false, false, false);
 
-  function peg$f0(oneTimeInitializer, perParseInitializer, rules) {
+  function peg$f0(fileInitializer, initializer, rules) {
     let result = {}
-    if (oneTimeInitializer) result.oneTimeInitializer = oneTimeInitializer;
-    if (perParseInitializer) result.perParseInitializer = perParseInitializer;
+    if (fileInitializer) result.fileInitializer = fileInitializer;
+    if (initializer) result.initializer = initializer;
     result.rules = rules;
     return result;
   }
@@ -701,7 +701,7 @@ function peg$parse(input, options) {
 
     s0 = peg$currPos;
     s1 = peg$currPos;
-    s2 = peg$parseOneTimeInitializer();
+    s2 = peg$parseFileInitializer();
     if (s2 !== peg$FAILED) {
       s3 = peg$parseEndOfStatement();
       if (s3 !== peg$FAILED) {
@@ -719,7 +719,7 @@ function peg$parse(input, options) {
       s1 = null;
     }
     s2 = peg$currPos;
-    s3 = peg$parsePerParseInitializer();
+    s3 = peg$parseInitializer();
     if (s3 !== peg$FAILED) {
       s4 = peg$parseEndOfStatement();
       if (s4 !== peg$FAILED) {
@@ -756,7 +756,7 @@ function peg$parse(input, options) {
     return s0;
   }
 
-  function peg$parseOneTimeInitializer() {
+  function peg$parseFileInitializer() {
     let s0, s1, s2, s3;
 
     s0 = peg$currPos;
@@ -791,7 +791,7 @@ function peg$parse(input, options) {
     return s0;
   }
 
-  function peg$parsePerParseInitializer() {
+  function peg$parseInitializer() {
     let s0, s1, s2, s3;
 
     s0 = peg$currPos;

@@ -2,22 +2,22 @@ Main
   = _ @Program _
 
 Program
-  = oneTimeInitializer:(@OneTimeInitializer EndOfStatement _)?
-    perParseInitializer:(@PerParseInitializer EndOfStatement _)? 
+  = fileInitializer:(@FileInitializer EndOfStatement _)?
+    initializer:(@Initializer EndOfStatement _)? 
     rules:Rule|.., _| {
       let result = {}
-      if (oneTimeInitializer) result.oneTimeInitializer = oneTimeInitializer;
-      if (perParseInitializer) result.perParseInitializer = perParseInitializer;
+      if (fileInitializer) result.fileInitializer = fileInitializer;
+      if (initializer) result.initializer = initializer;
       result.rules = rules;
       return result;
     }
   
-OneTimeInitializer
+FileInitializer
   = '{{' body:InsideBalancedBraces '}}' {
       return body;
     }
 
-PerParseInitializer
+Initializer
   = '{' body:InsideBalancedBraces '}' {
       return body;
     }
