@@ -95,10 +95,12 @@ ChoiceExpression
   }
 
 ActionExpression
-  = FOR _ '(' initializer:InsideBalancedParentheses ')' __ expression:ActionExpression {
+  = FOR _ isAny:(FOR_ANY _)? '(' _ loopVariable:Identifier _ FOR_IN _ iterable:JavascriptExpression _ ')' __ expression:ActionExpression {
       return {
-        type: 'loop',
-        initializer,
+        type: 'iterated',
+        generationType: isAny ? 'choice' : 'sequence',
+        iterableExpression: iterable,
+        loopVariable: { name: loopVariable },
         expression,
       };
     }
@@ -399,6 +401,12 @@ Whitespace
 
 FOR
   = '#for' _Z
+
+FOR_IN
+  = 'in' _Z
+
+FOR_ANY
+  = 'any' _Z
 
 IF
   = '#if' _Z

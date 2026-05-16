@@ -52,9 +52,10 @@ function formatInstruction(instruction, context) {
   }
 }
 
-function createFunction({ name } = {}) {
+function createFunction({ name, parent } = {}) {
   let createdFunction = new FunctionWriter();
   if (name) createdFunction.name = name;
+  if (parent) createdFunction.parent = parent;
   return createdFunction;
 }
 
@@ -131,19 +132,40 @@ class FunctionWriter extends CodeWriter {
     this.name = null
     this.parameters = [];
     this.variables = [];
+    this.namesDeclared = new Set();
     this.namesInUse = new Set();
+    this.parent = null;
   }
 
-  getNameNotInUse(requestedName, { alwaysIncludeIndex = false } = {}) {
+  isNameDeclared(name) {
+    if (this.namesDeclared.has(name)) {
+      return true;
+    }
+    if (this.parent) {
+      return this.parent.isNameDeclared(name);
+    }
+    return false;
+  }
+
+  isNameConflicting(name) {
+    if (this.namesInUse.has(name)) {
+      return true;
+    }
+    if (this.parent) {
+      return this.parent.isNameDeclared(name);
+    }
+    return false;
+  }
+
+  getNonConflictingName(requestedName, { alwaysIncludeIndex = false } = {}) {
     let name = requestedName;
     let suffix = 0;
     if (alwaysIncludeIndex) {
       name = `${requestedName}${suffix++}`;
     }
-    while (this.namesInUse.has(name)) {
+    while (this.isNameConflicting(name)) {
       name = `${requestedName}${suffix++}`;
     }
-    this.namesInUse.add(name);
     return name;
   }
 
@@ -152,14 +174,18 @@ class FunctionWriter extends CodeWriter {
   }
 
   parameter(requestedName, initializer) {
-    let name = this.getNameNotInUse(requestedName);
+    let name = this.getNonConflictingName(requestedName);
+    this.namesInUse.add(name);
+    this.namesDeclared.add(name);
     this.parameters.push({ name, initializer });
     return new Identifier(name);
   }
 
   variable(requestedName, { alwaysIncludeIndex = false } = {}) {
-    let name = this.getNameNotInUse(requestedName, { alwaysIncludeIndex });
+    let name = this.getNonConflictingName(requestedName, { alwaysIncludeIndex });
     if (!this.variables.some(v => v.name === name)) {
+      this.namesInUse.add(name);
+      this.namesDeclared.add(name);
       this.variables.push({ name });
     }
     return new Variable(name, this);
@@ -206,8 +232,8 @@ function tryParse(input) {
   }
 }
 
-function generateInlineRule(expression, context) {
-  let ruleFunction = createFunction()
+function generateInlineRule(expression, context, parent) {
+  let ruleFunction = createFunction({ parent });
 
   generateRuleFunctionBody(ruleFunction, expression, context)
 
@@ -237,6 +263,7 @@ function generateExpression(target, expression, code, context, secondaryTarget =
   else if (expression.type === 'defaultValue') generateDefaultValue(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'matchText') generateMatchText(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'iterated') generateIterated(target, expression, code, context, secondaryTarget);
   else throw new Error(`Unknown target type: ${expression.type}`);
 }
 
@@ -381,7 +408,7 @@ function generateRuleReference(target, expression, code, context, secondaryTarge
 
       let argumentExpression = expression.templateArguments?.[parameterIndex] ?? null;
       if (argumentExpression !== null) {
-        let argumentRuleFunction = generateInlineRule(argumentExpression, context);
+        let argumentRuleFunction = generateInlineRule(argumentExpression, context, code);
         ruleFunctionCall.add`${argumentRuleFunction}`;
       } else {
         ruleFunctionCall.add`undefined`;
@@ -578,6 +605,88 @@ function generateMatchText(target, expression, code, context, secondaryTarget) {
   textToMatch.free();
 }
 
+function generateIterated(target, expression, code, context, secondaryTarget) {
+  if (expression.generationType === 'sequence') {
+    let r
+    generateIteratedCore(
+      target,
+      expression,
+      code,
+      context,
+      secondaryTarget,
+      () => {
+        r = code.variable('r', { alwaysIncludeIndex: true });
+        code.addLine`${r} = [];`
+        code.addLine`${target} = ${context.utils.success}(null);`
+      },
+      () => {
+        return raw`!${target}.s`
+      },
+      () => {
+        return raw`${r}.push(${target}.v);`
+      },
+      () => {
+        return raw`${r}`;
+      },
+      () => {
+        r.free();
+      }
+    )
+  }
+  else if (expression.generationType === 'choice') {
+    let m
+    generateIteratedCore(
+      target,
+      expression,
+      code,
+      context,
+      secondaryTarget,
+      () => {
+        m = code.variable('m', { alwaysIncludeIndex: true });
+        code.addLine`${m} = ${context.utils.mark}();`
+        code.addLine`${target} = ${context.utils.failure}(null);`
+      },
+      () => {
+        return raw`${target}.s`
+      },
+      () => {
+        return raw`${m}.reset();`
+      },
+      null,
+      () => {
+        m.free();
+      }
+    );
+
+  }
+}
+
+function generateIteratedCore(target, expression, code, context, secondaryTarget, initialize, breakCondition, onIterationMatch, getResult, cleanup) {
+  initialize();
+  let iterable = code.variable('iter', { alwaysIncludeIndex: true });
+  code.addLine`${iterable} = ${generateActionCall(expression.iterableExpression, context.scope)};`
+  let loopVariable = code.variable('it', { alwaysIncludeIndex: true });
+  let loop = new BlockWriter(code);
+  code.addLine`for (let ${loopVariable} of ${iterable}) ${loop}`;
+  let newScope = new Map(context.scope);
+  newScope.set(expression.loopVariable.localNameInfo.id, loopVariable);
+  let iterationContext = { ...context, scope: newScope };
+  generateExpression(target, expression.expression, loop, iterationContext, null);
+  let iterationMatchCondition = breakCondition();
+  loop.addLine`if (${iterationMatchCondition}) { break; }`;
+  loop.addLine`${onIterationMatch()}`;
+  if (getResult !== null) {
+    let successBlock = new BlockWriter(code);
+    code.addLine`if (t.s) ${successBlock}`;
+    assignTargets(successBlock, target, secondaryTarget, raw`${context.utils.success}(${getResult()})`);
+  } else if (secondaryTarget) {
+    assignTargets(code, secondaryTarget, null, raw`${target}`);
+  }
+  iterable.free();
+  loopVariable.free();
+  cleanup();
+}
+
 function generateActionCall(action, scope) {
   let result = raw`${action.asReference}(`;
 
@@ -611,6 +720,11 @@ class BlockWriter extends CodeWriter {
   constructor(parent) {
     super();
     this.parent = parent;
+  }
+
+  isNameDeclared(name) {
+    if (this.parent) this.parent.isNameDeclared(name);
+    return false;
   }
 
   variable(requestedName, options) {
@@ -741,6 +855,10 @@ function* walkExpression(expression) {
   else if (expression.type === 'any') { }
   else if (expression.type === 'matchText') {
     yield* walkJavascriptExpression(expression.expression);
+  }
+  else if (expression.type === 'iterated') {
+    yield* walkJavascriptExpression(expression.iterableExpression);
+    yield* walkExpression(expression.expression);
   }
   else {
     throw new Error(`Unknown expression type: ${expression.type}`);
@@ -1063,7 +1181,7 @@ function compile(input) {
     }
   }
 
-  /* infer localName for sequence items */
+  /* infer localName for sequence items, attach local name info to all nodes that create local names for action execution contexts */
   let nextLocalNameId = 1;
   for (let node of walkProgram(program)) {
     if (node.type === 'rule') {
@@ -1075,6 +1193,14 @@ function compile(input) {
           resolvedLocalName: localName,
         };
       }
+    }
+    if (node.type === 'expression' && node.node.type === 'iterated') {
+      let item = node.node;
+      let loopVariableName = item.loopVariable.name
+      item.loopVariable.localNameInfo = {
+        id: nextLocalNameId++,
+        resolvedLocalName: loopVariableName,
+      };
     }
     if (node.type === 'expression' && node.node.type === 'sequence') {
       for (let item of node.node.items) {
@@ -1124,6 +1250,7 @@ function compile(input) {
         expression.action.scope = scope;
         handled = true;
       }
+      /* TODO maybe don't handle all these in one place, for better readability */
       if (expression.type === 'optional' || expression.type === 'repeated' || expression.type === 'group' || expression.type === 'text' || expression.type === 'defaultValue' || expression.type === 'lookahead') {
         walkExpressionWithScope(expression.expression, scope);
         handled = true;
@@ -1146,6 +1273,11 @@ function compile(input) {
         handled = true;
       }
       if (expression.type === 'ruleReference') {
+        if (expression.templateArguments) {
+          for (let argument of expression.templateArguments) {
+            walkExpressionWithScope(argument, scope);
+          }
+        }
         if (expression.valueArguments) {
           for (let argument of expression.valueArguments) {
             argument.scope = scope;
@@ -1158,6 +1290,12 @@ function compile(input) {
       }
       if (expression.type === 'matchText') {
         expression.expression.scope = scope;
+        handled = true;
+      }
+      if (expression.type === 'iterated') {
+        expression.iterableExpression.scope = scope;
+        let loopScope = [...scope, expression.loopVariable.localNameInfo];
+        walkExpressionWithScope(expression.expression, loopScope);
         handled = true;
       }
       if (!handled) {
@@ -1254,7 +1392,7 @@ function compile(input) {
 
     for (let parameter of parsedRule.rule.templateParameters) {
       if (parameter.defaultValue) {
-        let initializer = generateInlineRule(parameter.defaultValue, context);
+        let initializer = generateInlineRule(parameter.defaultValue, context, ruleFn);
         ruleFn.addLine`if (${parameter.functionParameter} === undefined) { ${parameter.functionParameter} = ${initializer}; }`
       }
     }
