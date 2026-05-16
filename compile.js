@@ -666,12 +666,22 @@ function generateIterated(target, expression, code, context, secondaryTarget) {
 }
 
 function generateIteratedCore(target, expression, code, context, secondaryTarget, initialize, breakCondition, onIterationMatch, getResult, cleanup) {
+  let { separator } = expression;
+  let needsIndex = separator !== null;
   initialize();
+  let index = needsIndex ? code.variable('i', { alwaysIncludeIndex: true }) : null;
   let iterable = code.variable('iter', { alwaysIncludeIndex: true });
   code.addLine`${iterable} = ${generateActionCall(expression.iterableExpression, context.scope)};`
+  if (needsIndex) code.addLine`${index} = 0;`
   let loopVariable = code.variable('it', { alwaysIncludeIndex: true });
   let loop = new BlockWriter(code);
   code.addLine`for (let ${loopVariable} of ${iterable}) ${loop}`;
+  if (separator !== null) {
+    let thenBlock = new BlockWriter(loop);
+    loop.addLine`if (${index} > 0) ${thenBlock}`;
+    generateExpression(target, separator, thenBlock, context, null);
+    thenBlock.addLine`if (!${target}.s) { break; }`
+  }
   let newScope = new Map(context.scope);
   newScope.set(expression.loopVariable.localNameInfo.id, loopVariable);
   let iterationContext = { ...context, scope: newScope };
@@ -679,6 +689,7 @@ function generateIteratedCore(target, expression, code, context, secondaryTarget
   let iterationMatchCondition = breakCondition();
   loop.addLine`if (${iterationMatchCondition}) { break; }`;
   loop.addLine`${onIterationMatch()}`;
+  if (needsIndex) loop.addLine`${index}++;`
   if (getResult !== null) {
     let successBlock = new BlockWriter(code);
     code.addLine`if (t.s) ${successBlock}`;
@@ -688,6 +699,7 @@ function generateIteratedCore(target, expression, code, context, secondaryTarget
   }
   iterable.free();
   loopVariable.free();
+  if (needsIndex) index.free();
   cleanup();
 }
 
@@ -862,6 +874,9 @@ function* walkExpression(expression) {
   }
   else if (expression.type === 'iterated') {
     yield* walkJavascriptExpression(expression.iterableExpression);
+    if (expression.separator !== null) {
+      yield* walkExpression(expression.separator);
+    }
     yield* walkExpression(expression.expression);
   }
   else {
@@ -1304,6 +1319,9 @@ function compile(input) {
       }
       if (expression.type === 'iterated') {
         expression.iterableExpression.scope = scope;
+        if (expression.separator !== null) {
+          walkExpressionWithScope(expression.separator, scope);
+        }
         let loopScope = [...scope, expression.loopVariable.localNameInfo];
         walkExpressionWithScope(expression.expression, loopScope);
         handled = true;

@@ -95,15 +95,19 @@ ChoiceExpression
   }
 
 ActionExpression
-  = FOR __ isAny:(FOR_ANY __)? '(' _ loopVariable:Identifier ':' iterable:JavascriptExpressionInsideParentheses ')' __ expression:ActionExpression {
-      return {
-        type: 'iterated',
-        generationType: isAny ? 'choice' : 'sequence',
-        iterableExpression: iterable,
-        loopVariable: { name: loopVariable },
-        expression,
-      };
-    }
+  = FOR __ modifier:(@ForModifier __)? '(' _ loopVariable:Identifier ':' iterable:JavascriptExpressionInsideParentheses ')' __ expression:ActionExpression {
+    let isAny = modifier?.type === 'any';
+    let separator = modifier?.type === 'separated' ? modifier.separator : null;
+
+    return {
+      type: 'iterated',
+      generationType: isAny ? 'choice' : 'sequence',
+      separator,
+      iterableExpression: iterable,
+      loopVariable: { name: loopVariable },
+      expression,
+    };
+  }
   / expression:PrefixedExpression __ '??' __ defaultValue:JavascriptExpression {
     return {
       type: 'defaultValue',
@@ -112,6 +116,10 @@ ActionExpression
     }
   }
   / SequenceExpression
+
+ForModifier
+  = FOR_ANY { return { type: 'any' }; }
+  / '<' _ separator:Expression _ '>' { return { type: 'separated', separator }; }
 
 ActionBlock
   = '{' body:InsideBalancedBraces '}' {
@@ -407,19 +415,16 @@ Whitespace
   = [ \t\r\n]
 
 FOR
-  = '#for' _Z
-
-FOR_IN
-  = 'in' _Z
+  = '?for' _Z
 
 FOR_ANY
   = 'any' _Z
 
 IF
-  = '#if' _Z
+  = '?if' _Z
 
 ANY
-  = '#any' _Z
+  = '?any' _Z
 
 _
   = Whitespace*
