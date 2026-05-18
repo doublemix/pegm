@@ -1038,43 +1038,84 @@ function compile(input) {
   code.addLine`${parseFn}`;
   let peg$source = parseFn.parameter('peg$source');
   let peg$index = parseFn.variable('peg$index');
+  let peg$line = parseFn.variable('peg$line');
+  let peg$column = parseFn.variable('peg$column');
   parseFn.addLine`${peg$index} = 0;`
+  parseFn.addLine`${peg$line} = 1;`
+  parseFn.addLine`${peg$column} = 1;`
+  let peg$advance = parseFunction(function peg$advance(n = 1) {
+    let result = peg$source.substr(peg$index, n);
+    let countNewLines = 0;
+    let lastNewLineIndex = -1;
+    for (let i = 0; i < result.length; i++) {
+      if (result.charAt(i) === '\n') {
+        countNewLines++;
+        lastNewLineIndex = i;
+      }
+    }
+    if (countNewLines > 0) {
+      peg$line += countNewLines;
+      peg$column = result.length - lastNewLineIndex;
+    } else {
+      peg$column += n;
+    }
+    peg$index += n;
+    return result;
+  });
+  parseFn.addLine`${peg$advance}`;
   let success = parseFunction(function peg$success(value) {
     return { s: true, v: value };
   });
   parseFn.addLine`${success}`;
-  let failure = parseFunction(function peg$failure() {
+  let peg$maxFailurePosition = parseFn.variable('peg$maxFailurePosition');
+  parseFn.addLine`${peg$maxFailurePosition} = null;`
+  let failure = parseFunction(function peg$failure(expected = null) {
+    if (peg$maxFailurePosition === null || peg$index > peg$maxFailurePosition.position) {
+      peg$maxFailurePosition = {
+        position: peg$index,
+        line: peg$line,
+        column: peg$column,
+        expected: expected !== null ? [expected] : [],
+      }
+    } else if (peg$index === peg$maxFailurePosition.position) {
+      if (expected !== null) {
+        peg$maxFailurePosition.expected.push(expected);
+      }
+    }
     return { s: false };
   });
   parseFn.addLine`${failure}`;
 
   let matchTextFn = parseFunction(function peg$matchText(text) {
     if (peg$source.substr(peg$index, text.length) === text) {
-      peg$index += text.length;
-      return peg$success(text);
+      return peg$success(peg$advance(text.length));
     } else {
-      return peg$failure();
+      return peg$failure({ text });
     }
   })
   parseFn.addLine`${matchTextFn}`;
 
   let matchAnyFn = parseFunction(function peg$matchAny() {
     if (peg$index < peg$source.length) {
-      return peg$success(peg$source.charAt(peg$index++));
+      return peg$success(peg$advance());
     } else {
-      return peg$failure();
+      return peg$failure({ any: true });
     }
   })
   parseFn.addLine`${matchAnyFn}`;
 
   let markFn = parseFunction(function peg$mark() {
     let position = peg$index;
+    let line = peg$line;
+    let column = peg$column;
     return {
       get position() {
         return position;
       },
       reset() {
         peg$index = position;
+        peg$line = line;
+        peg$column = column;
       },
       text() {
         return peg$source.slice(position, peg$index);
@@ -1101,7 +1142,7 @@ function compile(input) {
       let c = classFn.variable('c');
       let matched = classFn.variable('matched');
       classFn.addLine`${matched} = false;`
-      classFn.addLine`${c} = ${peg$source}.charAt(${peg$index}++);`
+      classFn.addLine`${c} = ${peg$source}.charAt(${peg$index});`
       let index = 0
       for (let classElement of characterClass.elements) {
         let lineStart = index === 0 ? 'if' : 'else if';
@@ -1117,7 +1158,7 @@ function compile(input) {
         index++
       }
       let finalCondition = characterClass.inverted ? raw`!${matched}` : raw`${matched}`;
-      classFn.addLine`if (${finalCondition}) { return ${success.asReference}(${c}); } else { return ${failure.asReference}(); }`
+      classFn.addLine`if (${finalCondition}) { return ${success.asReference}(${peg$advance}()); } else { return ${failure.asReference}(${JSON.stringify({ class: characterClass })}); }`
       characterClass.asReference = classFn.asReference;
       parseFn.addLine`${classFn}`;
     }
@@ -1440,9 +1481,18 @@ function compile(input) {
     return function () {
       let t = startRule();
       if (t.s && peg$index === peg$source.length) {
-        return t;
+        return {
+          success: true,
+          value: t.v,
+        }
       } else {
-        return peg$failure();
+        return {
+          success: false,
+          index: peg$maxFailurePosition.position,
+          line: peg$maxFailurePosition.line,
+          column: peg$maxFailurePosition.column,
+          expected: peg$maxFailurePosition.expected,
+        }
       }
     }
   })
