@@ -59,6 +59,7 @@ function createFunction({ name, parent } = {}) {
   return createdFunction;
 }
 
+/* TODO delete this, the variable references aren't resolved against there real names */
 function parseFunction(fn) {
   let fnString = fn.toString();
   // TODO assuming function declaration on first line
