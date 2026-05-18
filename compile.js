@@ -289,7 +289,7 @@ function generateChoice(target, expression, code, context, secondaryTarget) {
     generateExpression(target, choice, currentCode, context, null);
   }
   if (secondaryTarget) {
-    assignTargets(code, secondaryTarget, null, raw`${t}`);
+    assignTargets(code, secondaryTarget, null, raw`${target}`);
   }
 
   mark.free();
