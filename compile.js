@@ -320,7 +320,7 @@ function generateSequence(target, expression, code, context, secondaryTarget) {
   if (expression.returnInfo.type === 'action') {
     returnExpression.add`${generateActionCall(expression.returnExpression, currentScope)}`;
   }
-  if (expression.returnInfo.type === 'named') {
+  else if (expression.returnInfo.type === 'named') {
     returnExpression.add`{ `
     for (let [index, item] of enumerate(expression.returnInfo.items)) {
       if (index > 0) {
@@ -335,7 +335,7 @@ function generateSequence(target, expression, code, context, secondaryTarget) {
     }
     returnExpression.add` }`
   }
-  if (expression.returnInfo.type === 'array') {
+  else if (expression.returnInfo.type === 'array') {
     returnExpression.add`[`
     for (let [index, item] of enumerate(expression.returnInfo.items)) {
       if (index > 0) {
@@ -349,7 +349,7 @@ function generateSequence(target, expression, code, context, secondaryTarget) {
     }
     returnExpression.add`]`
   }
-  if (expression.returnInfo.type === 'tuple') {
+  else if (expression.returnInfo.type === 'tuple') {
     returnExpression.add`[`
     for (let [index, item] of enumerate(expression.returnInfo.items)) {
       if (index > 0) {
@@ -359,8 +359,14 @@ function generateSequence(target, expression, code, context, secondaryTarget) {
     }
     returnExpression.add`]`
   }
-  if (expression.returnInfo.type === 'single') {
+  else if (expression.returnInfo.type === 'single') {
     returnExpression.add`${itemVariables[expression.returnInfo.index]}.v`
+  }
+  else if (expression.returnInfo.type === 'null') {
+    returnExpression.add`null`
+  }
+  else {
+    throw new Error(`Unknown return info type: ${expression.returnInfo.type}`);
   }
   let successBlock = new BlockWriter(code);
   code.addLine`if (${target}.s) ${successBlock}`;
@@ -897,6 +903,8 @@ function* walkJavascriptExpression(expression) {
   yield { type: 'javascriptExpression', node: expression };
 }
 
+const unpickedTypes = new Set(['lookahead', 'guard']);
+
 function mapSequenceItemForReturnType(item, index) {
   let { localName: explicitLocalName, isSpread, pluckType, pluckName = null } = item;
 
@@ -908,6 +916,8 @@ function mapSequenceItemForReturnType(item, index) {
 
   let actualPluckName = pluckName?.name ?? null;
 
+  let isUnpicked = unpickedTypes.has(item.expression.type);
+
   return {
     index,
     isStandardPluck,
@@ -917,6 +927,7 @@ function mapSequenceItemForReturnType(item, index) {
     hasExplicitLocalName: explicitLocalName !== null,
     localName,
     pluckName: actualPluckName,
+    isUnpicked,
   }
 }
 function addSequenceReturnType(sequence) {
@@ -959,7 +970,7 @@ function addSequenceReturnType(sequence) {
     let pickedItems
 
     if (hasPluck) pickedItems = items.filter(item => item.isPluck || item.isSpread);
-    else pickedItems = items.slice();
+    else pickedItems = items.filter(item => !item.isUnpicked);
 
     if (returnType === 'named') {
       returnInfo = {
@@ -977,7 +988,7 @@ function addSequenceReturnType(sequence) {
       let standardReturnType;
 
       if (hasSpread) standardReturnType = 'array';
-      else if (pickedItems.length === 0) throw new Error(`Cannot determine return type for sequence with no picked items`);
+      else if (pickedItems.length === 0) standardReturnType = 'null';
       else if (pickedItems.length === 1) standardReturnType = 'single';
       else standardReturnType = 'tuple';
 
@@ -1008,6 +1019,12 @@ function addSequenceReturnType(sequence) {
               index: item.index,
             }
           })
+        }
+      }
+
+      if (standardReturnType === 'null') {
+        returnInfo = {
+          type: 'null',
         }
       }
     }
