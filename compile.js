@@ -1511,14 +1511,10 @@ function compile(input) {
       let t = startRule();
       if (t.s) {
         if (peg$index < peg$source.length) {
-          return {
-            success: false,
-            index: peg$index,
-            line: peg$line,
-            column: peg$column,
-            expected: [{ endOfInput: true }],
-          }
+          t = peg$failure({ endOfInput: true });
         }
+      }
+      if (t.s) {
         return {
           success: true,
           value: t.v,
