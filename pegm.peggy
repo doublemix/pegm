@@ -179,7 +179,7 @@ Pluck
       pluckName: name,
     }
   }
-  / '@' !NamedPluckName !'=' {
+  / '@' !(NamedPluckName '=' / '='){
     return {
       isSpread: false,
       pluckType: 'standard',
