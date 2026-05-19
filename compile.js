@@ -1492,7 +1492,16 @@ function compile(input) {
   let parseFullSource = parseFunction(function parseFullSource(startRule) {
     return function () {
       let t = startRule();
-      if (t.s && peg$index === peg$source.length) {
+      if (t.s) {
+        if (peg$index < peg$source.length) {
+          return {
+            success: false,
+            index: peg$index,
+            line: peg$line,
+            column: peg$column,
+            expected: [{ endOfInput: true }],
+          }
+        }
         return {
           success: true,
           value: t.v,
