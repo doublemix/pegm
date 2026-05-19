@@ -269,6 +269,7 @@ function generateExpression(target, expression, code, context, secondaryTarget =
   else if (expression.type === 'guard') generateGuard(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'matchText') generateMatchText(target, expression, code, context, secondaryTarget);
   else if (expression.type === 'iterated') generateIterated(target, expression, code, context, secondaryTarget);
+  else if (expression.type === 'value') generateValue(target, expression, code, context, secondaryTarget);
   else throw new Error(`Unknown target type: ${expression.type}`);
 }
 
@@ -704,6 +705,10 @@ function generateIteratedCore(target, expression, code, context, secondaryTarget
   cleanup();
 }
 
+function generateValue(target, expression, code, context, secondaryTarget) {
+  assignTargets(code, target, secondaryTarget, raw`${context.utils.success}(${generateActionCall(expression.expression, context.scope)})`);
+}
+
 function generateActionCall(action, scope) {
   let result = raw`${action.asReference}(`;
 
@@ -879,6 +884,9 @@ function* walkExpression(expression) {
       yield* walkExpression(expression.separator);
     }
     yield* walkExpression(expression.expression);
+  }
+  else if (expression.type === 'value') {
+    yield* walkJavascriptExpression(expression.expression);
   }
   else {
     throw new Error(`Unknown expression type: ${expression.type}`);
@@ -1366,6 +1374,10 @@ function compile(input) {
         }
         let loopScope = [...scope, expression.loopVariable.localNameInfo];
         walkExpressionWithScope(expression.expression, loopScope);
+        handled = true;
+      }
+      if (expression.type === 'value') {
+        expression.expression.scope = scope;
         handled = true;
       }
       if (!handled) {

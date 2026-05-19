@@ -23,7 +23,7 @@ Initializer
     }
 
 Rule
-  = ruleInfo:RuleHeader _ body:Expression EndOfStatement {
+  = ruleInfo:RuleHeader body:Expression EndOfStatement {
     const { name, parameters } = ruleInfo;
     return {
       name,
@@ -34,7 +34,7 @@ Rule
   }
 
 RuleHeader
-  = name:Identifier parameters:RuleParameters? _ Equals {
+  = name:Identifier parameters:RuleParameters? __ Equals __ {
     return {
       name,
       parameters,
@@ -142,6 +142,7 @@ SequenceElement
         expression,
       };
     }
+  / PluckedValue
 
 Labels
   = localName:LocalName? pick:Pick? {
@@ -171,11 +172,18 @@ Spread
   }
 
 Pluck
-  = '@' name:(@NamedPluckName ':')? {
+  = '@' name:NamedPluckName ':' {
     return {
       isSpread: false,
-      pluckType: name ? 'named' : 'standard',
+      pluckType: 'named',
       pluckName: name,
+    }
+  }
+  / '@' !NamedPluckName !'=' {
+    return {
+      isSpread: false,
+      pluckType: 'standard',
+      pluckName: null,
     }
   }
 
@@ -183,8 +191,19 @@ NamedPluckName
   = name:Identifier { return { type: 'identifier', name }; }
   / name:String { return { type: 'literal', name }; }
 
-StandardPluck
-  = '@'
+PluckedValue
+  = '@' name:(NamedPluckName)? '=' expression:JavascriptExpression {
+    return {
+      localName: null,
+      isSpread: false,
+      pluckType: name ? 'named' : 'standard',
+      pluckName: name,
+      expression: {
+        type: 'value',
+        expression,
+      },
+    }
+  }
 
 PrefixedExpression
   = prefixInfo:Prefix? base:SuffixedExpression {
