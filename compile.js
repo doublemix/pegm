@@ -1036,7 +1036,13 @@ function addSequenceReturnType(sequence) {
   sequence.returnInfo = returnInfo;
 }
 
-function compile(input) {
+const TARGETS = ['node', 'browser'];
+
+function compile(input, { target = 'node' } = {}) {
+  if (!TARGETS.includes(target)) {
+    return { success: false, error: `Unknown target '${target}'. Valid targets are: ${TARGETS.join(', ')}` };
+  }
+
   const result = tryParse(input);
   if (!result.success) {
     return { success: false, error: result.error };
@@ -1544,7 +1550,8 @@ function compile(input) {
   }
   parseFn.addLine`return parseFullSource(${parsedStartRule.asReference})();`
 
-  code.add`\
+  if (target === 'node') {
+    code.add`\
 if (require.main === module) {
   let input = process.argv[2];
   let isFile = input === '-f';
@@ -1557,8 +1564,9 @@ if (require.main === module) {
 } else {
   module.exports = { parse: ${parseFn.asReference} };
 }`
+  }
 
   return { success: true, code: formatWriter(code) };
 }
 
-module.exports = { compile };
+module.exports = { compile, TARGETS };

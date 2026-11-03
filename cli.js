@@ -3,7 +3,8 @@ const path = require('path');
 
 const VALID_COMMANDS = ['parse', 'compile'];
 const VALID_FLAGS = ['--watch', '-w', '--help', '-h'];
-const FLAGS_WITH_VALUE = ['--emit-ast'];
+const FLAGS_WITH_VALUE = ['--emit-ast', '--target'];
+const VALID_TARGETS = ['node', 'browser'];
 const PARSER_MODULE = './pegm';
 const COMPILER_MODULE = './compile';
 const PARSER_FILE = path.resolve(__dirname, 'pegm.js');
@@ -19,6 +20,7 @@ function printUsage() {
   console.log('Options:');
   console.log('  --watch, -w       Watch input file for changes and re-run');
   console.log('  --emit-ast FILE   Output intermediate parse result to FILE (compile only)');
+  console.log('  --target TARGET   Output target: node (default) or browser (compile only)');
   console.log('  --help, -h        Show this help message');
   console.log('');
   console.log('Examples:');
@@ -133,10 +135,21 @@ function validateArguments() {
     }
   }
 
+  const target = flags['--target'] ?? 'node';
+  if (!VALID_TARGETS.includes(target)) {
+    console.error(`Error: Unknown target '${target}'`);
+    console.error(`Valid targets are: ${VALID_TARGETS.join(', ')}`);
+    process.exit(1);
+  }
+  if (command !== 'compile' && flags['--target']) {
+    console.error("Error: '--target' is only valid with the compile command");
+    process.exit(1);
+  }
+
   const isWatch = flags['--watch'] || flags['-w'];
   const emitAst = flags['--emit-ast'];
 
-  return { command, input, output, isWatch, emitAst };
+  return { command, input, output, isWatch, emitAst, target };
 }
 
 function clearRequireCache(modulePath) {
@@ -162,7 +175,7 @@ function runParse(input, output) {
   }
 }
 
-function runCompile(input, output, emitAst) {
+function runCompile(input, output, emitAst, target) {
   try {
     let source = fs.readFileSync(input, 'utf-8');
     clearRequireCache(PARSER_MODULE);
@@ -181,7 +194,7 @@ function runCompile(input, output, emitAst) {
 
     // Now compile
     const { compile } = require(COMPILER_MODULE);
-    let result = compile(source);
+    let result = compile(source, { target });
     if (!result.success) {
       console.error('Compilation failed with errors:');
       console.error(result.error);
@@ -248,7 +261,7 @@ function startWatch(watchFiles, runFn) {
   });
 }
 
-const { command, input, output, isWatch, emitAst } = validateArguments();
+const { command, input, output, isWatch, emitAst, target } = validateArguments();
 
 if (command === 'parse') {
   if (isWatch) {
@@ -258,9 +271,9 @@ if (command === 'parse') {
   }
 } else if (command === 'compile') {
   if (isWatch) {
-    startWatch([input, PARSER_FILE, COMPILER_FILE], () => runCompile(input, output, emitAst));
+    startWatch([input, PARSER_FILE, COMPILER_FILE], () => runCompile(input, output, emitAst, target));
   } else {
-    runCompile(input, output, emitAst);
+    runCompile(input, output, emitAst, target);
   }
 }
 
