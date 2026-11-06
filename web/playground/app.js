@@ -14,6 +14,150 @@
 `;
   $('source').value = 'hello world';
 
+  const grammarEditor = $('grammar');
+  const fileTypes = [{ description: 'PEGM grammar', accept: { 'text/plain': ['.pegm'] } }];
+  const canAccessFiles = typeof window.showOpenFilePicker === 'function' &&
+    typeof window.showSaveFilePicker === 'function';
+  let fileHandle = null;
+  let fileName = 'Untitled';
+  let savedText = grammarEditor.value;
+  let diskText = null;
+  let fileBusy = false;
+  let fileMessage = '';
+  let fileError = false;
+  let memoryDraft = null;
+
+  function isGrammarDirty() {
+    return grammarEditor.value !== savedText;
+  }
+
+  function warnBeforeLeaving(event) {
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  function updateFileStatus() {
+    const dirty = isGrammarDirty();
+    $('file-status').textContent = `${fileName}${dirty ? ' • Unsaved changes' : ''}${fileMessage ? ` — ${fileMessage}` : ''}`;
+    $('file-status').classList.toggle('error', fileError);
+    $('file-status').title = $('file-status').textContent;
+    $('open-file-label').hidden = !fileHandle;
+    $('open-file-name').textContent = fileHandle ? fileName : '';
+    $('open-file-name').title = fileHandle ? fileName : '';
+    window.removeEventListener('beforeunload', warnBeforeLeaving);
+    if (dirty) window.addEventListener('beforeunload', warnBeforeLeaving);
+  }
+
+  function setFileBusy(busy) {
+    fileBusy = busy;
+    for (const id of ['open-file', 'save-file', 'save-as-file', 'close-file']) $(id).disabled = busy;
+  }
+
+  function setFileMessage(message, isError = false) {
+    fileMessage = message;
+    fileError = isError;
+    updateFileStatus();
+  }
+
+  function confirmReplace() {
+    return !fileHandle || !isGrammarDirty() || window.confirm('Discard unsaved grammar changes and open another file?');
+  }
+
+  async function loadFile(file, handle, originalText) {
+    const text = await file.text();
+    if (grammarEditor.value !== originalText && !confirmReplace()) return;
+    if (!fileHandle) memoryDraft = { text: grammarEditor.value, savedText };
+    grammarEditor.value = text;
+    savedText = grammarEditor.value;
+    diskText = text;
+    fileHandle = handle;
+    fileName = file.name;
+    setFileMessage('Opened');
+    markEdited();
+    run();
+  }
+
+  async function openFile() {
+    if (fileBusy || !confirmReplace()) return;
+    const originalText = grammarEditor.value;
+    setFileBusy(true);
+    try {
+      let handles;
+      try {
+        handles = await window.showOpenFilePicker({ types: fileTypes, multiple: false });
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        throw error;
+      }
+      const handle = handles[0];
+      await loadFile(await handle.getFile(), handle, originalText);
+    } catch (error) {
+      setFileMessage(`Open failed: ${formatError(error)}`, true);
+    } finally {
+      setFileBusy(false);
+    }
+  }
+
+  async function saveFile(saveAs = false) {
+    if (fileBusy) return;
+    setFileBusy(true);
+    try {
+      let handle = saveAs ? null : fileHandle;
+      if (!handle) {
+        try {
+          handle = await window.showSaveFilePicker({
+            suggestedName: fileName === 'Untitled' ? 'grammar.pegm' : fileName,
+            types: fileTypes,
+          });
+        } catch (error) {
+          if (error.name === 'AbortError') return;
+          throw error;
+        }
+      }
+      if (handle === fileHandle) {
+        const currentDiskText = await (await handle.getFile()).text();
+        if (currentDiskText !== diskText && !window.confirm('This file has changed on disk. Overwrite it with the editor contents?')) return;
+      }
+      const text = grammarEditor.value;
+      const writable = await handle.createWritable();
+      try {
+        await writable.write(text);
+        await writable.close();
+      } catch (error) {
+        try {
+          await writable.abort();
+        } catch (abortError) {
+          throw new Error(`${formatError(error)}; could not abort write: ${formatError(abortError)}`);
+        }
+        throw error;
+      }
+      if (!fileHandle) memoryDraft = null;
+      fileHandle = handle;
+      fileName = handle.name;
+      savedText = text;
+      diskText = text;
+      setFileMessage(isGrammarDirty() ? 'Saved earlier version' : 'Saved');
+    } catch (error) {
+      setFileMessage(`Save failed: ${formatError(error)}`, true);
+    } finally {
+      setFileBusy(false);
+    }
+  }
+
+  function closeFile() {
+    if (!fileHandle || fileBusy) return;
+    if (isGrammarDirty() && !window.confirm('Discard unsaved grammar changes and close this file?')) return;
+    fileHandle = null;
+    fileName = 'Untitled';
+    diskText = null;
+    grammarEditor.value = memoryDraft ? memoryDraft.text : '';
+    savedText = memoryDraft ? memoryDraft.savedText : '';
+    memoryDraft = null;
+    setFileMessage('');
+    markEdited();
+    run();
+  }
+
   function setStatus(text, kind = '') {
     $('status').textContent = text;
     $('status').className = `status ${kind}`;
@@ -52,6 +196,13 @@
     setStatus('Edited - run to update', 'pending');
     $('output-note').textContent = 'Output may be out of date';
     $('source-count').textContent = `${$('source').value.length} characters`;
+    updateFileStatus();
+  }
+
+  function markGrammarEdited() {
+    fileMessage = '';
+    fileError = false;
+    markEdited();
   }
 
   function run() {
@@ -123,6 +274,16 @@
   }
 
   $('run').addEventListener('click', run);
+  $('open-file').addEventListener('click', openFile);
+  $('close-file').addEventListener('click', closeFile);
+  $('save-file').addEventListener('click', () => saveFile());
+  $('save-as-file').addEventListener('click', () => saveFile(true));
+  document.addEventListener('keydown', (event) => {
+    if (canAccessFiles && (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      saveFile(event.shiftKey);
+    }
+  });
   $('tabs').addEventListener('click', (event) => {
     const tab = event.target.closest('[data-tab]');
     if (tab) showTab(tab.dataset.tab);
@@ -143,7 +304,10 @@
   });
   for (const id of ['grammar', 'source']) {
     const editor = $(id);
-    editor.addEventListener('input', markEdited);
+    editor.addEventListener('input', () => {
+      if (id === 'grammar') markGrammarEdited();
+      else markEdited();
+    });
     editor.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
@@ -151,10 +315,13 @@
       } else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         editor.setRangeText('  ', editor.selectionStart, editor.selectionEnd, 'end');
-        markEdited();
+        if (id === 'grammar') markGrammarEdited();
+        else markEdited();
       }
     });
   }
+  $('file-actions').hidden = !canAccessFiles;
+  $('save-shortcut').hidden = !canAccessFiles;
   $('source-count').textContent = `${$('source').value.length} characters`;
   run();
 })();

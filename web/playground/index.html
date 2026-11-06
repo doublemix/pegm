@@ -34,11 +34,15 @@
         <div class="inputs">
           <section class="panel editor-panel grammar-panel">
             <div class="panel-header">
-              <div><span class="panel-number">01</span><label for="grammar">Grammar</label><span class="file-tag">.pegm</span></div>
-              <span class="panel-hint">Define your rules</span>
+              <div class="grammar-heading"><span class="panel-number">01</span><label for="grammar">Grammar</label><span class="file-tag">.pegm</span><span id="open-file-label" class="open-file-label" hidden><span id="open-file-name"></span><button id="close-file" type="button" aria-label="Close grammar file" title="Close grammar file">&times;</button></span></div>
+              <div id="file-actions" class="file-actions" hidden>
+                <button id="open-file" type="button">Open</button>
+                <button id="save-file" type="button">Save</button>
+                <button id="save-as-file" type="button">Save as</button>
+              </div>
             </div>
             <textarea id="grammar" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="grammar-hint"></textarea>
-            <div class="panel-footer" id="grammar-hint"><span>PEGM grammar</span><span>Tab to indent</span></div>
+            <div class="panel-footer" id="grammar-hint"><span id="file-status" role="status" aria-live="polite">Untitled</span><span id="save-shortcut" hidden>Ctrl / Cmd + S to save</span></div>
           </section>
 
           <section class="panel editor-panel source-panel">

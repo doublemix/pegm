@@ -47,6 +47,20 @@ h1 { margin: 12px 0 8px; color: #f3f1e9; font-size: clamp(28px, 3vw, 40px); font
 .panel-number { color: #d4ae77; font: 11px Consolas, monospace; }
 .file-tag { padding: 3px 6px; border-radius: 4px; background: #2a3940; color: #a3b6b4; font: 10px Consolas, monospace; }
 .panel-hint { color: #819298; font-size: 11px; }
+.grammar-heading { min-width: 0; }
+.open-file-label { display: flex; align-items: center; min-width: 0; max-width: 190px; padding-left: 8px; border-left: 1px solid #43535a; color: #d7e4dc; font-size: 11px; }
+.open-file-label[hidden] { display: none; }
+#open-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#close-file { flex-shrink: 0; border: 0; background: transparent; padding: 2px 6px; color: #aabbb8; font-size: 17px; line-height: 1; }
+#close-file:hover:not(:disabled) { color: white; }
+#close-file:disabled { opacity: .5; cursor: wait; }
+.file-actions { display: flex; gap: 5px !important; }
+.file-actions[hidden] { display: none; }
+.file-actions button { padding: 6px 9px; border: 1px solid #43535a; border-radius: 6px; background: transparent; color: #bbcac8; font-size: 11px; white-space: nowrap; }
+.file-actions button:hover:not(:disabled) { color: white; border-color: #96aaa6; }
+.file-actions button:disabled { opacity: .5; cursor: wait; }
+#file-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#file-status.error { color: #f1a9a0; }
 textarea, .pane { width: 100%; margin: 0; border: 0; background: #131e27; color: #d8e5e3; font: 13px/1.75 "Cascadia Code", Consolas, monospace; tab-size: 2; }
 textarea { flex: 1; min-height: 0; padding: 18px 20px; resize: none; }
 textarea:focus { outline: none; box-shadow: inset 0 0 0 2px #b89a6d; }
@@ -81,6 +95,11 @@ textarea:focus { outline: none; box-shadow: inset 0 0 0 2px #b89a6d; }
 }
 @media (max-width: 480px) {
   .local-badge, .panel-hint, .shortcut { display: none; }
+  .grammar-panel .panel-header { padding: 0 10px; }
+  .grammar-panel .panel-header > div { gap: 5px; }
+  .grammar-panel .file-tag { display: none; }
+  .open-file-label { max-width: 100px; }
+  .file-actions button { padding: 6px; }
   .tabs { gap: 12px; }
   .tabs button { font-size: 11px; }
 }
