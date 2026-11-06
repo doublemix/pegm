@@ -1,12 +1,14 @@
 (() => {
   const { compile } = window.pegm;
   const TIMEOUT_MS = 3000;
+  const DEBOUNCE_MS = 1000;
   const $ = (id) => document.getElementById(id);
   const tabs = ['result', 'code'];
   const labels = { result: 'PARSE RESULT', code: 'GENERATED JAVASCRIPT' };
   let activeTab = 'result';
   let activeWorker = null;
   let timer = null;
+  let debounceTimer = null;
   let revision = 0;
 
   $('grammar').value = `Main
@@ -74,7 +76,6 @@
     fileName = file.name;
     setFileMessage('Opened');
     markEdited();
-    run();
   }
 
   async function openFile() {
@@ -86,7 +87,10 @@
       try {
         handles = await window.showOpenFilePicker({ types: fileTypes, multiple: false });
       } catch (error) {
-        if (error.name === 'AbortError') return;
+        if (error.name === 'AbortError') {
+          setFileMessage('No file opened: picker cancelled or selection blocked');
+          return;
+        }
         throw error;
       }
       const handle = handles[0];
@@ -110,7 +114,10 @@
             types: fileTypes,
           });
         } catch (error) {
-          if (error.name === 'AbortError') return;
+          if (error.name === 'AbortError') {
+            setFileMessage('No file saved: picker cancelled or selection blocked');
+            return;
+          }
           throw error;
         }
       }
@@ -155,7 +162,6 @@
     memoryDraft = null;
     setFileMessage('');
     markEdited();
-    run();
   }
 
   function setStatus(text, kind = '') {
@@ -193,10 +199,15 @@
   function markEdited() {
     revision++;
     cancelWorker();
-    setStatus('Edited - run to update', 'pending');
+    clearTimeout(debounceTimer);
+    setStatus('Waiting for edits...', 'pending');
     $('output-note').textContent = 'Output may be out of date';
     $('source-count').textContent = `${$('source').value.length} characters`;
     updateFileStatus();
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      run();
+    }, DEBOUNCE_MS);
   }
 
   function markGrammarEdited() {
@@ -273,7 +284,6 @@
     }
   }
 
-  $('run').addEventListener('click', run);
   $('open-file').addEventListener('click', openFile);
   $('close-file').addEventListener('click', closeFile);
   $('save-file').addEventListener('click', () => saveFile());
@@ -309,10 +319,7 @@
       else markEdited();
     });
     editor.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-        event.preventDefault();
-        run();
-      } else if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key === 'Tab' && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         editor.setRangeText('  ', editor.selectionStart, editor.selectionEnd, 'end');
         if (id === 'grammar') markGrammarEdited();

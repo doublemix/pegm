@@ -11,6 +11,10 @@ function createPlayground({ direct = true } = {}) {
   const confirmations = [];
   const downloads = [];
   const windowListeners = new Map();
+  const timers = new Map();
+  const workers = [];
+  const compilations = [];
+  let nextTimer = 1;
   let openPicker;
   let savePicker;
 
@@ -19,11 +23,11 @@ function createPlayground({ direct = true } = {}) {
       const handlers = new Map();
       elements.set(id, {
         id, value: '', textContent: '', className: '', title: '', disabled: false,
-        classList: { toggle() {} },
+        classList: { toggle() { } },
         addEventListener(type, fn) { handlers.set(type, fn); },
         dispatch(type, event = {}) { return handlers.get(type)?.({ target: this, ...event }); },
-        setAttribute() {},
-        focus() {},
+        setAttribute() { },
+        focus() { },
         click() { if (this.download) downloads.push(this.download); },
       });
     }
@@ -35,7 +39,7 @@ function createPlayground({ direct = true } = {}) {
     createElement() { return element(`link-${downloads.length}`); },
   };
   const window = {
-    pegm: { compile: () => ({ success: true, code: '' }) },
+    pegm: { compile: (grammar) => { compilations.push(grammar); return { success: true, code: '' }; } },
     confirm: () => confirmations.shift() ?? true,
     addEventListener(type, fn) { windowListeners.set(type, fn); },
     removeEventListener(type) { windowListeners.delete(type); },
@@ -46,19 +50,51 @@ function createPlayground({ direct = true } = {}) {
   }
   const context = {
     window, document, navigator: { clipboard: {} }, Blob,
-    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
-    Worker: class { postMessage() {} terminate() {} },
-    setTimeout: () => 1, clearTimeout() {},
+    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() { } },
+    Worker: class {
+      constructor() { workers.push(this); }
+      postMessage(message) { this.message = message; }
+      terminate() { this.terminated = true; }
+    },
+    setTimeout: (callback, delay) => { const id = nextTimer++; timers.set(id, { callback, delay }); return id; },
+    clearTimeout: id => timers.delete(id),
   };
   vm.runInNewContext(app, context);
   return {
-    element, windowListeners, confirmations, downloads,
+    element, windowListeners, confirmations, downloads, timers, workers, compilations,
     open(fn) { openPicker = fn; },
     save(fn) { savePicker = fn; },
     edit(text) { element('grammar').value = text; element('grammar').dispatch('input'); },
     key(event) { return listeners.get('keydown')(event); },
+    flush(delay) {
+      const entries = [...timers.entries()].filter(([, timer]) => timer.delay === delay);
+      for (const [id, timer] of entries) {
+        timers.delete(id);
+        timer.callback();
+      }
+    },
   };
 }
+
+test('editor changes debounce into one run and ignore stale worker results', () => {
+  const page = createPlayground();
+  const firstWorker = page.workers[0];
+  page.edit('first');
+  page.element('source').value = 'latest source';
+  page.element('source').dispatch('input');
+  page.edit('latest grammar');
+  assert.equal(firstWorker.terminated, true);
+  assert.equal(page.compilations.length, 1);
+  assert.equal([...page.timers.values()].filter(timer => timer.delay === 1000).length, 1);
+  firstWorker.onmessage({ data: { ok: true, result: { success: true, value: 'stale' } } });
+  assert.notEqual(page.element('status').textContent, 'Parse successful');
+  page.flush(1000);
+  assert.equal(page.compilations.length, 2);
+  assert.equal(page.compilations[1], 'latest grammar');
+  assert.equal(page.workers[1].message.source, 'latest source');
+  page.workers[1].onmessage({ data: { ok: true, result: { success: true, value: 'latest' } } });
+  assert.match(page.element('result').textContent, /latest/);
+});
 
 function fileHandle(name, initial) {
   let content = initial;
@@ -72,7 +108,7 @@ function fileHandle(name, initial) {
       return {
         async write(value) { written = value; },
         async close() { content = written; },
-        async abort() {},
+        async abort() { },
       };
     },
   };
@@ -107,8 +143,8 @@ test('save as and keyboard save preserve edits made while writing', async () => 
   let finishWrite;
   file.createWritable = async () => ({
     write: () => new Promise(resolve => { finishWrite = resolve; }),
-    async close() {},
-    async abort() {},
+    async close() { },
+    async abort() { },
   });
   page.save(async () => file);
   let prevented = false;
@@ -146,11 +182,21 @@ test('open cancellation and failed saves preserve the editor', async () => {
   page.open(async () => { throw Object.assign(new Error('cancelled'), { name: 'AbortError' }); });
   await page.element('open-file').dispatch('click');
   assert.equal(page.element('grammar').value, original);
+  assert.match(page.element('file-status').textContent, /picker cancelled or selection blocked/);
   page.edit('edited');
   page.save(async () => { throw new Error('permission denied'); });
   await page.element('save-file').dispatch('click');
   assert.match(page.element('file-status').textContent, /Save failed: permission denied/);
 
+});
+
+test('a save picker abort leaves the editor unchanged and reports the outcome', async () => {
+  const page = createPlayground();
+  page.edit('draft');
+  page.save(async () => { throw Object.assign(new Error('aborted'), { name: 'AbortError' }); });
+  await page.element('save-file').dispatch('click');
+  assert.equal(page.element('grammar').value, 'draft');
+  assert.match(page.element('file-status').textContent, /No file saved: picker cancelled or selection blocked/);
 });
 
 test('closing a file restores the previous in-memory draft and protects unsaved file edits', async () => {
