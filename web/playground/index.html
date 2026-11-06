@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111a24">
+  <title>PEGM Playground</title>
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <a class="brand" href="../" aria-label="PEGM home">
+        <span class="brand-mark" aria-hidden="true">{ }</span>
+        <span><strong>pegm</strong><span class="brand-divider">/</span><span class="brand-subtitle">playground</span></span>
+      </a>
+      <span class="local-badge"><span></span> Runs locally in your browser</span>
+    </header>
+
+    <main>
+      <div class="intro">
+        <div>
+          <div class="eyebrow"><span></span> PARSER WORKSPACE</div>
+          <h1>Make a little language.</h1>
+          <p>Write a grammar, bring some input, and see what comes out.</p>
+        </div>
+        <div class="run-group">
+          <span class="shortcut">Ctrl / Cmd + Enter</span>
+          <button id="run" class="run-button" type="button"><span aria-hidden="true">&#9654;</span> Run parser</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <div class="inputs">
+          <section class="panel editor-panel grammar-panel">
+            <div class="panel-header">
+              <div><span class="panel-number">01</span><label for="grammar">Grammar</label><span class="file-tag">.pegm</span></div>
+              <span class="panel-hint">Define your rules</span>
+            </div>
+            <textarea id="grammar" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="grammar-hint"></textarea>
+            <div class="panel-footer" id="grammar-hint"><span>PEGM grammar</span><span>Tab to indent</span></div>
+          </section>
+
+          <section class="panel editor-panel source-panel">
+            <div class="panel-header">
+              <div><span class="panel-number">02</span><label for="source">Input</label><span class="file-tag">text</span></div>
+              <span class="panel-hint">Text to parse</span>
+            </div>
+            <textarea id="source" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+            <div class="panel-footer"><span>Source text</span><span id="source-count"></span></div>
+          </section>
+        </div>
+
+        <section class="panel output-panel">
+          <div class="panel-header output-heading">
+            <div><span class="panel-number">03</span><h2>Output</h2></div>
+            <span id="status" class="status" role="status" aria-live="polite">Ready</span>
+          </div>
+          <div class="output-toolbar">
+            <div id="tabs" class="tabs" role="tablist" aria-label="Output views">
+              <button id="tab-result" type="button" role="tab" aria-selected="true" aria-controls="result" tabindex="0" data-tab="result">Result</button>
+              <button id="tab-code" type="button" role="tab" aria-selected="false" aria-controls="code" tabindex="-1" data-tab="code">Generated JS</button>
+            </div>
+            <button id="copy" class="copy-button" type="button" aria-label="Copy current output">Copy</button>
+          </div>
+          <div class="output-content">
+            <pre id="result" class="pane" role="tabpanel" aria-labelledby="tab-result" tabindex="0"></pre>
+            <pre id="code" class="pane" role="tabpanel" aria-labelledby="tab-code" tabindex="0" hidden></pre>
+          </div>
+          <div class="panel-footer"><span id="output-label">PARSE RESULT</span><span id="output-note">Run to inspect your output</span></div>
+        </section>
+      </div>
+      <footer class="page-footer"><span>PEG grammars, without the setup.</span><span>Grammars and input are processed in your browser.</span></footer>
+    </main>
+  </div>
+  <script src="../dist/pegm-web.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

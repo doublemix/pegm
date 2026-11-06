@@ -4,6 +4,8 @@
   "main": "cli.js",
   "scripts": {
     "build-parser:dev": "peggy -w pegm.peggy -o pegm.js",
+    "build:web": "node web/build.js",
+    "serve:web": "npm run build:web && node web/serve.js",
     "compile-test:dev": "node cli.js compile -w scratch/test.pegm scratch/test.js --emit-ast scratch/test.json"
   },
   "keywords": [],
